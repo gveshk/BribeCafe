@@ -5,15 +5,27 @@ describe("Escrow", function () {
   let escrow;
   let owner, buyer, seller, treasury;
   let TABLE_ID;
+  let provider;
 
   before(async function () {
     this.timeout(60000);
     TABLE_ID = ethers.keccak256(ethers.toUtf8Bytes("test-table-1"));
+    
+    // Create a provider from hardhat
+    const hre = require("hardhat");
+    provider = hre.network.provider;
   });
 
   beforeEach(async function () {
     this.timeout(60000);
-    [owner, buyer, seller, treasury] = await ethers.getSigners();
+    
+    // Create wallets directly
+    const wallets = [];
+    for (let i = 0; i < 4; i++) {
+      const wallet = ethers.Wallet.createRandom().connect(provider);
+      wallets.push(wallet);
+    }
+    [owner, buyer, seller, treasury] = wallets;
 
     const Escrow = await ethers.getContractFactory("Escrow");
     escrow = await Escrow.deploy();
