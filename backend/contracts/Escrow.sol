@@ -98,8 +98,8 @@ contract Escrow {
      * @notice Initialize escrow for a table
      */
     function initialize(
-        address buyer,
-        address seller,
+        address, /* buyer */
+        address, /* seller */
         address treasury
     ) external {
         // Only allow initialization via factory

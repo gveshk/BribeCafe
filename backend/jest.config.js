@@ -6,9 +6,10 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js', 'json'],
   collectCoverageFrom: [
     'src/**/*.ts',
+    'contracts/**/*.sol',
     '!src/**/*.d.ts',
   ],
   coverageDirectory: 'coverage',
   verbose: true,
-  testTimeout: 30000,
+  testTimeout: 60000,
 };

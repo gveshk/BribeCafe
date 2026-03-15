@@ -13,9 +13,9 @@
     "declaration": false,
     "sourceMap": true,
     "moduleResolution": "node",
-    "types": ["node"],
+    "types": ["node", "mocha"],
     "noImplicitAny": false
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": ["src/**/*", "tests/**/*", "hardhat.config.ts"],
+  "exclude": ["node_modules", "dist"]
 }
