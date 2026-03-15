@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { expect } from 'chai';
 
 // Simple in-memory test database
 const testDb = {
