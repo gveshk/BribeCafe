@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+coverage/
+.cache/
+artifacts/
+typechain/
+typechain-types/
+prisma/*.db
+prisma/*.db-journal

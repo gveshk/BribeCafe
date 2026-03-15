@@ -1,0 +1,144 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Agent - represents an agent on the platform
+model Agent {
+  id               String   @id @default(uuid())
+  ownerAddress     String   @unique
+  publicKey        String
+  capabilities    String[]
+  reputationScore  Int      @default(0)
+  walletAddress    String?
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  createdTables    Table[]  @relation("TableCreator")
+  participatedTables Table[] @relation("TableParticipant")
+  messagesSent     Message[]
+  quotesCreated    Quote[]
+  contractsAsBuyer Contract[] @relation("ContractBuyer")
+  contractsAsSeller Contract[] @relation("ContractSeller")
+  disputesOpened   Dispute[]
+  escrowEvents     EscrowEvent[]
+}
+
+// Table - A deal room between two agents
+model Table {
+  id               String   @id @default(uuid())
+  creatorId        String
+  participantId   String
+  status           String   @default("active")
+  encryptedBudget  String?
+  encryptedQuote   String?
+  contractHash     String?
+  
+  // Onchain references
+  tableIdBytes     String?  // bytes32 from blockchain
+  escrowAddress    String?
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  creator          Agent    @relation("TableCreator", fields: [creatorId], references: [id])
+  participant      Agent    @relation("TableParticipant", fields: [participantId], references: [id])
+  messages         Message[]
+  quotes           Quote[]
+  contracts        Contract[]
+  escrowEvents     EscrowEvent[]
+  disputes         Dispute[]
+}
+
+// Message - Encrypted messages within a table
+model Message {
+  id           String   @id @default(uuid())
+  tableId      String
+  senderId     String
+  content      String   // Encrypted content
+  messageType  String   @default("text") // text, quote, document, contract, work, system
+  
+  createdAt    DateTime @default(now())
+
+  // Relations
+  table        Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  sender       Agent    @relation(fields: [senderId], references: [id])
+}
+
+// Quote - Price proposal from seller to buyer
+model Quote {
+  id              String   @id @default(uuid())
+  tableId         String
+  sellerId        String
+  encryptedAmount String
+  description     String
+  approved        Boolean  @default(false)
+  approvedBy      String?
+  approvedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  // Relations
+  table           Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  seller          Agent    @relation(fields: [sellerId], references: [id])
+}
+
+// Contract - Binding agreement between buyer and seller
+model Contract {
+  id              String   @id @default(uuid())
+  tableId         String
+  buyerId         String
+  sellerId        String
+  encryptedAmount String
+  deliverables    String[]
+  timeline        Json     // { start: number, end: number }
+  buyerSigned     Boolean  @default(false)
+  sellerSigned    Boolean  @default(false)
+  buyerSignedAt   DateTime?
+  sellerSignedAt  DateTime?
+  createdAt       DateTime @default(now())
+
+  // Relations
+  table           Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  buyer           Agent    @relation("ContractBuyer", fields: [buyerId], references: [id])
+  seller          Agent    @relation("ContractSeller", fields: [sellerId], references: [id])
+}
+
+// EscrowEvent - Tracks all escrow state changes
+model EscrowEvent {
+  id          String   @id @default(uuid())
+  tableId     String
+  eventType   String   // created, deposited, released, cancelled, disputed
+  amount      String
+  fee         String
+  txHash      String?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  table       Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  agent       Agent?   @relation(fields: [agentId], references: [id])
+  agentId     String?
+}
+
+// Dispute - Dispute cases
+model Dispute {
+  id          String   @id @default(uuid())
+  tableId     String
+  openedBy    String
+  reason      String   // quality, non_delivery, other
+  evidence    String[] // Array of evidence references
+  decision    String?  // buyer_wins, seller_wins, split
+  decidedBy   String?
+  decidedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  table       Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  opener      Agent    @relation(fields: [openedBy], references: [id])
+}
