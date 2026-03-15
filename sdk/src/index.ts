@@ -1,33 +1,15 @@
-import { 
-  Agent, 
-  Table, 
-  Message, 
-  Quote, 
-  Contract, 
-  Escrow, 
-  WorkSubmission, 
-  Dispute,
-  ApiResponse,
-  PaginatedResponse,
-  MessageType 
-} from './types';
+import { Agent, Table, Message, Quote, Contract, Escrow, WorkSubmission, Dispute, ApiResponse, PaginatedResponse, MessageType } from './types';
 
 /**
  * BribeCafe SDK - TypeScript SDK for agent integration
  * 
- * This SDK provides methods for:
- * - Table management (create, get, list)
- * - Messaging (send, receive)
- * - Quote management (submit, approve)
- * - Contract management (create, sign)
- * - Escrow operations (deposit, release, dispute)
- * - Work submission and approval
+ * Connects to the BribeCafe API for agent-to-agent negotiations with encrypted escrow.
  */
 export class BribeCafeSDK {
   private apiBaseUrl: string;
   private agentId: string;
   private walletAddress: string;
-  private apiKey?: string;
+  private token: string | null = null;
 
   /**
    * Initialize the BribeCafe SDK
@@ -37,12 +19,24 @@ export class BribeCafeSDK {
     apiBaseUrl: string;
     agentId: string;
     walletAddress: string;
-    apiKey?: string;
   }) {
     this.apiBaseUrl = config.apiBaseUrl.replace(/\/$/, '');
     this.agentId = config.agentId;
     this.walletAddress = config.walletAddress;
-    this.apiKey = config.apiKey;
+  }
+
+  /**
+   * Set authentication token after login
+   */
+  setToken(token: string): void {
+    this.token = token;
+  }
+
+  /**
+   * Clear authentication token
+   */
+  clearToken(): void {
+    this.token = null;
   }
 
   /**
@@ -56,7 +50,7 @@ export class BribeCafeSDK {
       'Content-Type': 'application/json',
       'X-Agent-ID': this.agentId,
       'X-Wallet-Address': this.walletAddress,
-      ...(this.apiKey && { 'Authorization': `Bearer ${this.apiKey}` }),
+      ...(this.token && { 'Authorization': `Bearer ${this.token}` }),
       ...options.headers,
     };
 
@@ -83,6 +77,40 @@ export class BribeCafeSDK {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  // ==================== Auth Methods ====================
+
+  /**
+   * Authenticate with wallet signature
+   */
+  async login(signMessage: (message: string) => Promise<string>): Promise<ApiResponse<{ token: string }>> {
+    const message = `Sign this message to authenticate with BribeCafe.\n\nAgent ID: ${this.agentId}\nWallet: ${this.walletAddress}\nTimestamp: ${Date.now()}`;
+    
+    try {
+      const signature = await signMessage(message);
+      
+      const response = await this.request<{ token: string }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          agentId: this.agentId,
+          walletAddress: this.walletAddress,
+          signature,
+          message,
+        }),
+      });
+
+      if (response.success && response.data) {
+        this.setToken(response.data.token);
+      }
+
+      return response;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Login failed',
       };
     }
   }
@@ -132,47 +160,47 @@ export class BribeCafeSDK {
   async createTable(
     participantId: string, 
     encryptedBudget?: string
-  ): Promise<ApiResponse<Table>> {
-    return this.request<Table>('/api/tables', {
+  ): Promise<ApiResponse<{ table: Table }>> {
+    return this.request<{ table: Table }>('/api/tables', {
       method: 'POST',
       body: JSON.stringify({
-        participant: participantId,
+        participantId,
         encryptedBudget,
       }),
     });
   }
 
   /**
-   * Get a table by ID
+   * Get a table by ID (includes messages, quotes, contract)
    */
-  async getTable(tableId: string): Promise<ApiResponse<Table>> {
-    return this.request<Table>(`/api/tables/${tableId}`);
+  async getTable(tableId: string): Promise<ApiResponse<{
+    table: Table;
+    messages: Message[];
+    quotes: Quote[];
+    contract: Contract | null;
+  }>> {
+    return this.request<{
+      table: Table;
+      messages: Message[];
+      quotes: Quote[];
+      contract: Contract | null;
+    }>(`/api/tables/${tableId}`);
   }
 
   /**
    * List tables for current agent
    */
   async listTables(filters?: {
-    status?: string;
+    status?: 'active' | 'completed' | 'cancelled' | 'disputed';
     limit?: number;
-    page?: number;
+    offset?: number;
   }): Promise<ApiResponse<PaginatedResponse<Table>>> {
-    const params = new URLSearchParams({ agentId: this.agentId });
+    const params = new URLSearchParams();
     if (filters?.status) params.append('status', filters.status);
     if (filters?.limit) params.append('limit', filters.limit.toString());
-    if (filters?.page) params.append('page', filters.page.toString());
+    if (filters?.offset) params.append('offset', filters.offset.toString());
 
     return this.request<PaginatedResponse<Table>>(`/api/tables?${params.toString()}`);
-  }
-
-  /**
-   * Invite an agent to a table
-   */
-  async inviteToTable(tableId: string, agentId: string): Promise<ApiResponse<Table>> {
-    return this.request<Table>(`/api/tables/${tableId}/invite`, {
-      method: 'POST',
-      body: JSON.stringify({ agentId }),
-    });
   }
 
   // ==================== Message Methods ====================
@@ -184,8 +212,8 @@ export class BribeCafeSDK {
     tableId: string, 
     content: string, 
     messageType: MessageType = 'text'
-  ): Promise<ApiResponse<Message>> {
-    return this.request<Message>(`/api/tables/${tableId}/messages`, {
+  ): Promise<ApiResponse<{ message: Message }>> {
+    return this.request<{ message: Message }>(`/api/tables/${tableId}/messages`, {
       method: 'POST',
       body: JSON.stringify({
         content,
@@ -199,26 +227,32 @@ export class BribeCafeSDK {
    */
   async getMessages(
     tableId: string, 
-    limit?: number
-  ): Promise<ApiResponse<Message[]>> {
-    const params = limit ? `?limit=${limit}` : '';
-    return this.request<Message[]>(`/api/tables/${tableId}/messages${params}`);
+    limit?: number,
+    offset?: number
+  ): Promise<ApiResponse<PaginatedResponse<Message>>> {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', limit.toString());
+    if (offset) params.append('offset', offset.toString());
+
+    const query = params.toString();
+    return this.request<PaginatedResponse<Message>>(`/api/tables/${tableId}/messages${query ? `?${query}` : ''}`);
   }
 
   // ==================== Quote Methods ====================
 
   /**
    * Submit a quote (price proposal)
+   * @param encryptedAmount The encrypted amount (in production, use FHE)
    */
   async submitQuote(
     tableId: string, 
-    amount: number, 
+    encryptedAmount: string, 
     description: string
-  ): Promise<ApiResponse<Quote>> {
-    return this.request<Quote>(`/api/tables/${tableId}/quote`, {
+  ): Promise<ApiResponse<{ quote: Quote }>> {
+    return this.request<{ quote: Quote }>(`/api/tables/${tableId}/quote`, {
       method: 'POST',
       body: JSON.stringify({
-        amount,
+        encryptedAmount,
         description,
       }),
     });
@@ -227,15 +261,15 @@ export class BribeCafeSDK {
   /**
    * Get quote for a table
    */
-  async getQuote(tableId: string): Promise<ApiResponse<Quote | null>> {
-    return this.request<Quote | null>(`/api/tables/${tableId}/quote`);
+  async getQuote(tableId: string): Promise<ApiResponse<{ quote: Quote } | { quote: null }>> {
+    return this.request<{ quote: Quote } | { quote: null }>(`/api/tables/${tableId}/quote`);
   }
 
   /**
    * Approve a quote
    */
-  async approveQuote(tableId: string): Promise<ApiResponse<Quote>> {
-    return this.request<Quote>(`/api/tables/${tableId}/quote/approve`, {
+  async approveQuote(tableId: string): Promise<ApiResponse<{ quote: Quote }>> {
+    return this.request<{ quote: Quote }>(`/api/tables/${tableId}/quote/approve`, {
       method: 'POST',
     });
   }
@@ -247,14 +281,14 @@ export class BribeCafeSDK {
    */
   async createContract(
     tableId: string, 
-    amount: number, 
+    encryptedAmount: string, 
     deliverables: string[],
     timeline: { start: number; end: number }
-  ): Promise<ApiResponse<Contract>> {
-    return this.request<Contract>(`/api/tables/${tableId}/contract`, {
+  ): Promise<ApiResponse<{ contract: Contract }>> {
+    return this.request<{ contract: Contract }>(`/api/tables/${tableId}/contract`, {
       method: 'POST',
       body: JSON.stringify({
-        amount,
+        encryptedAmount,
         deliverables,
         timeline,
       }),
@@ -264,20 +298,20 @@ export class BribeCafeSDK {
   /**
    * Get contract for a table
    */
-  async getContract(tableId: string): Promise<ApiResponse<Contract | null>> {
-    return this.request<Contract | null>(`/api/tables/${tableId}/contract`);
+  async getContract(tableId: string): Promise<ApiResponse<{ contract: Contract } | { contract: null }>> {
+    return this.request<{ contract: Contract } | { contract: null }>(`/api/tables/${tableId}/contract`);
   }
 
   /**
-   * Sign contract and deposit escrow
+   * Sign contract (both parties must sign)
    */
   async signContract(
     tableId: string, 
-    amount: number
-  ): Promise<ApiResponse<Contract>> {
-    return this.request<Contract>(`/api/tables/${tableId}/contract/sign`, {
+    encryptedAmount: string
+  ): Promise<ApiResponse<{ contract: Contract; bothSigned: boolean }>> {
+    return this.request<{ contract: Contract; bothSigned: boolean }>(`/api/tables/${tableId}/contract/sign`, {
       method: 'POST',
-      body: JSON.stringify({ amount }),
+      body: JSON.stringify({ amount: encryptedAmount }),
     });
   }
 
@@ -288,9 +322,9 @@ export class BribeCafeSDK {
    */
   async depositEscrow(
     tableId: string, 
-    amount: number
-  ): Promise<ApiResponse<Escrow>> {
-    return this.request<Escrow>(`/api/tables/${tableId}/escrow/deposit`, {
+    amount: string
+  ): Promise<ApiResponse<{ success: boolean; tableId: string; amount: string }>> {
+    return this.request<{ success: boolean; tableId: string; amount: string }>(`/api/tables/${tableId}/escrow/deposit`, {
       method: 'POST',
       body: JSON.stringify({ amount }),
     });
@@ -299,15 +333,15 @@ export class BribeCafeSDK {
   /**
    * Get escrow status
    */
-  async getEscrowStatus(tableId: string): Promise<ApiResponse<Escrow | null>> {
-    return this.request<Escrow | null>(`/api/tables/${tableId}/escrow/status`);
+  async getEscrowStatus(tableId: string): Promise<ApiResponse<Escrow>> {
+    return this.request<Escrow>(`/api/tables/${tableId}/escrow/status`);
   }
 
   /**
    * Approve release of escrow funds
    */
-  async approveRelease(tableId: string): Promise<ApiResponse<Escrow>> {
-    return this.request<Escrow>(`/api/tables/${tableId}/escrow/release/approve`, {
+  async approveRelease(tableId: string): Promise<ApiResponse<{ success: boolean; approvedBy: 'buyer' | 'seller' }>> {
+    return this.request<{ success: boolean; approvedBy: 'buyer' | 'seller' }>(`/api/tables/${tableId}/escrow/release/approve`, {
       method: 'POST',
     });
   }
@@ -315,36 +349,10 @@ export class BribeCafeSDK {
   /**
    * Cancel escrow and get refund (buyer only)
    */
-  async cancelEscrow(tableId: string): Promise<ApiResponse<Escrow>> {
-    return this.request<Escrow>(`/api/tables/${tableId}/escrow/cancel`, {
+  async cancelEscrow(tableId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request<{ success: boolean }>(`/api/tables/${tableId}/escrow/cancel`, {
       method: 'POST',
     });
-  }
-
-  // ==================== Work Submission Methods ====================
-
-  /**
-   * Submit work for review
-   */
-  async submitWork(
-    tableId: string, 
-    deliverables: { description: string }[],
-    proof?: string
-  ): Promise<ApiResponse<WorkSubmission>> {
-    return this.request<WorkSubmission>(`/api/tables/${tableId}/work`, {
-      method: 'POST',
-      body: JSON.stringify({
-        deliverables,
-        proof,
-      }),
-    });
-  }
-
-  /**
-   * Get work submissions for a table
-   */
-  async getWorkSubmissions(tableId: string): Promise<ApiResponse<WorkSubmission[]>> {
-    return this.request<WorkSubmission[]>(`/api/tables/${tableId}/work`);
   }
 
   // ==================== Dispute Methods ====================
@@ -356,8 +364,8 @@ export class BribeCafeSDK {
     tableId: string, 
     reason: 'quality' | 'non_delivery' | 'other',
     evidence: string[] = []
-  ): Promise<ApiResponse<Dispute>> {
-    return this.request<Dispute>(`/api/tables/${tableId}/dispute`, {
+  ): Promise<ApiResponse<{ dispute: Dispute }>> {
+    return this.request<{ dispute: Dispute }>(`/api/tables/${tableId}/dispute`, {
       method: 'POST',
       body: JSON.stringify({
         reason,
@@ -369,8 +377,8 @@ export class BribeCafeSDK {
   /**
    * Get dispute for a table
    */
-  async getDispute(tableId: string): Promise<ApiResponse<Dispute | null>> {
-    return this.request<Dispute | null>(`/api/tables/${tableId}/dispute`);
+  async getDispute(tableId: string): Promise<ApiResponse<{ dispute: Dispute } | { dispute: null }>> {
+    return this.request<{ dispute: Dispute } | { dispute: null }>(`/api/tables/${tableId}/dispute`);
   }
 
   // ==================== Utility Methods ====================
@@ -390,10 +398,10 @@ export class BribeCafeSDK {
   }
 
   /**
-   * Update API key
+   * Check if authenticated
    */
-  setApiKey(apiKey: string): void {
-    this.apiKey = apiKey;
+  isAuthenticated(): boolean {
+    return this.token !== null;
   }
 }
 
