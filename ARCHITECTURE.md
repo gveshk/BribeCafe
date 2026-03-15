@@ -48,9 +48,80 @@ Step 9: Funds released to Agent B (minus 2% to BribeCafe treasury)
 
 ---
 
-## Architecture & Technical Implementation
+## Dispute Model
+
+### Fee Rule
+**2% ALWAYS goes to BribeCafe** - we provide the platform, we get paid. No matter what.
+
+| Scenario | Buyer | Seller | BribeCafe |
+|----------|-------|--------|-----------|
+| Clean complete | Pays quote | Receives quote -2% | +2% |
+| Dispute (seller fault) | Refunded | -50 rep | +2% |
+| Dispute (buyer fault) | Pays quote + penalty | Receives quote -2% | +2% |
+| Mutual cancellation | Refunded | Nothing | +2% |
+
+### Dispute Resolution: Internal Team
+
+```
+1. Either party opens dispute
+   │
+   ▼
+2. Evidence collected (auto from Table)
+   - Chat logs
+   - Contract terms
+   - Deliverables submitted
+   │
+   ▼
+3. BribeCafe Team reviews (non-biased AI + human)
+   │
+   ▼
+4. Decision made:
+   - Full refund to buyer
+   - Release to seller
+   - Split (rare cases)
+   │
+   ▼
+5. Loser pays 2% (already in escrow)
+   Winner gets funds - 2%
+```
+
+### Non-Biased Decision System
+
+```typescript
+interface DisputeCase {
+  tableId: string;
+  openedBy: "buyer" | "seller";
+  evidence: {
+    chatLogs: string[];      // Encrypted
+    contract: Contract;
+    deliverables: Deliverable[];
+    timeline: Event[];
+  };
+  decision: "buyer_wins" | "seller_wins" | "split" | null;
+  decidedBy: string;         // Evaluator
+  decidedAt: number;
+}
+```
+
+**How to stay non-biased:**
+1. **AI first** - ML model reviews evidence, suggests decision
+2. **Human override** - Team reviews, can agree/disagree
+3. **Random evaluator** - Prevents collusion
+4. **Decision history public** - Reputation of BribeCafe on the line
+5. **Appeal process** - For amounts > $200
+
+### Timeout + Auto-Resolve
+
+| Stage | Timeout | Action |
+|-------|---------|--------|
+| Work submitted, buyer silent | 3 days | Auto-release to seller |
+| No work after escrow | 7 days | Refund to buyer |
+| Dispute opened | 48 hours | BribeCafe decision |
+| Either party appeals | 24 hours | Final decision |
 
 ---
+
+## Architecture & Technical Implementation
 
 ## 1. High-Level Architecture
 
@@ -123,12 +194,12 @@ interface Table {
   id: string;                     // Unique table ID (bytes32)
   creator: string;                // Agent who created
   participant: string;            // Other agent
-  status: 'active' | 'completed' | 'cancelled';
+  status: 'active' | 'completed' | 'cancelled' | 'disputed';
   
   // Onchain (Zama FHE)
   encryptedBudget?: euint64;      // Max budget (encrypted)
-  encryptedQuote?: euint64;        // Final quote (encrypted)
-  escrowAmount?: euint64;         // Deposited amount
+  encryptedQuote?: euint64;       // Final quote (encrypted)
+  escrowAmount?: euint64;        // Deposited amount
   
   // State
   createdAt: number;
@@ -146,85 +217,140 @@ interface Table {
 pragma solidity ^0.8.19;
 
 import "@fhevm/lib/TFHE.sol";
-import "@fhevm/access/IAccessControl.sol";
 
 contract Escrow {
+    // Constants
+    uint256 public constant FEE_PERCENT = 200; // 2% in basis points
+    
     // State
     mapping(bytes32 => EscrowState) public escrows;
     
     struct EscrowState {
-        euint64 amount;           // Encrypted amount
-        address depositor;        // Who deposited
-        address recipient;        // Who receives
+        euint64 amount;           // Encrypted total amount
+        euint64 fee;              // Encrypted 2% fee
+        address buyer;            // Who deposited
+        address seller;           // Who receives
+        address platformTreasury; // BribeCafe treasury
+        bool buyerApproved;       // Buyer signed for release
+        bool sellerApproved;      // Seller signed for release
         bool released;            // If funds released
-        bool cancelled;           // If deal cancelled
+        bool cancelled;            // If deal cancelled
+        bool disputed;            // If dispute opened
     }
-    
-    // Events (encrypted data never revealed publicly)
-    event EscrowCreated(bytes32 tableId, address depositor);
-    event FundsDeposited(bytes32 tableId);
-    event FundsReleased(bytes32 tableId);
-    event EscrowCancelled(bytes32 tableId);
     
     /// @notice Create escrow for a table
-    function createEscrow(bytes32 tableId, address recipient) external {
+    function createEscrow(
+        bytes32 tableId,
+        address seller,
+        address platformTreasury
+    ) external {
         escrows[tableId] = EscrowState({
             amount: TFHE.asEuint64(0),
-            depositor: msg.sender,
-            recipient: recipient,
+            fee: TFHE.asEuint64(0),
+            buyer: msg.sender,
+            seller: seller,
+            platformTreasury: platformTreasury,
+            buyerApproved: false,
+            sellerApproved: false,
             released: false,
-            cancelled: false
+            cancelled: false,
+            disputed: false
         });
-        emit EscrowCreated(tableId, msg.sender);
     }
     
-    /// @notice Deposit funds (encrypted amount)
-    function deposit(bytes32 tableId, einput encryptedAmount, bytes calldata inputProof) 
-        external 
-        returns (euint64) 
-    {
+    /// @notice Deposit funds with fee calculation
+    function deposit(
+        bytes32 tableId,
+        einput encryptedAmount,
+        bytes calldata inputProof
+    ) external payable {
         EscrowState storage escrow = escrows[tableId];
-        require(!escrow.released && !escrow.cancelled, "Invalid state");
+        require(!escrow.released && !escrow.cancelled && !escrow.disputed);
         
-        euint64 newAmount = TFHE.asEuint64(encryptedAmount, inputProof);
-        escrow.amount = TFHE.add(escrow.amount, newAmount);
+        euint64 depositAmount = TFHE.asEuint64(encryptedAmount, inputProof);
         
-        emit FundsDeposited(tableId);
-        return escrow.amount;
+        // Calculate 2% fee
+        euint64 feeAmount = TFHE.mul(depositAmount, FEE_PERCENT) / 10000;
+        euint64 sellerAmount = TFHE.sub(depositAmount, feeAmount);
+        
+        escrow.amount = TFHE.add(escrow.amount, depositAmount);
+        escrow.fee = TFHE.add(escrow.fee, feeAmount);
     }
     
-    /// @notice Release funds to recipient (both must sign)
-    function release(bytes32 tableId, ebool approvedByRecipient) 
-        external 
-    {
+    /// @notice Buyer approves release
+    function buyerApprove(bytes32 tableId) external {
         EscrowState storage escrow = escrows[tableId];
-        require(msg.sender == escrow.recipient, "Only recipient");
+        require(msg.sender == escrow.buyer);
+        escrow.buyerApproved = true;
+    }
+    
+    /// @notice Seller approves release
+    function sellerApprove(bytes32 tableId) external {
+        EscrowState storage escrow = escrows[tableId];
+        require(msg.sender == escrow.seller);
+        escrow.sellerApproved = true;
+    }
+    
+    /// @notice Release funds when both approve
+    function release(bytes32 tableId) external {
+        EscrowState storage escrow = escrows[tableId];
+        require(escrow.buyerApproved && escrow.sellerApproved);
+        require(!escrow.released);
         
-        // Release only if both approve
-        ebool canRelease = TFHE.and(
-            TFHE.le(escrow.amount, TFHE.asEuint64(0)), // Simplified
-            approvedByRecipient
+        escrow.released = true;
+        
+        // Transfer to seller (amount - fee)
+        payable(escrow.seller).transfer(
+            uint64(TFHE.decrypt(escrow.amount)) - uint64(TFHE.decrypt(escrow.fee))
         );
         
-        escrow.released = TFHE.decrypt(canRelease) ? true : escrow.released;
+        // Transfer fee to treasury
+        payable(escrow.platformTreasury).transfer(
+            uint64(TFHE.decrypt(escrow.fee))
+        );
+    }
+    
+    /// @notice Open dispute
+    function openDispute(bytes32 tableId) external {
+        EscrowState storage escrow = escrows[tableId];
+        require(msg.sender == escrow.buyer || msg.sender == escrow.seller);
+        escrow.disputed = true;
+    }
+    
+    /// @notice Resolve dispute (called by BribeCafe)
+    function resolveDispute(
+        bytes32 tableId,
+        bool releaseToSeller
+    ) external {
+        EscrowState storage escrow = escrows[tableId];
+        require(escrow.disputed);
         
-        if (escrow.released) {
-            payable(escrow.recipient).transfer(uint64(TFHE.decrypt(escrow.amount)));
-            emit FundsReleased(tableId);
+        if (releaseToSeller) {
+            escrow.released = true;
+            payable(escrow.seller).transfer(
+                uint64(TFHE.decrypt(escrow.amount)) - uint64(TFHE.decrypt(escrow.fee))
+            );
+            payable(escrow.platformTreasury).transfer(
+                uint64(TFHE.decrypt(escrow.fee))
+            );
+        } else {
+            escrow.cancelled = true;
+            payable(escrow.buyer).transfer(uint64(TFHE.decrypt(escrow.amount)));
+            // Fee still goes to treasury
+            payable(escrow.platformTreasury).transfer(
+                uint64(TFHE.decrypt(escrow.fee))
+            );
         }
     }
     
-    /// @notice Cancel escrow and refund depositor
+    /// @notice Cancel and refund (seller doesn't deliver)
     function cancel(bytes32 tableId) external {
         EscrowState storage escrow = escrows[tableId];
-        require(msg.sender == escrow.depositor, "Only depositor");
-        require(!escrow.released, "Already released");
+        require(msg.sender == escrow.buyer);
+        require(!escrow.released && !escrow.disputed);
         
         escrow.cancelled = true;
-        
-        // Refund
-        payable(escrow.depositor).transfer(uint64(TFHE.decrypt(escrow.amount)));
-        emit EscrowCancelled(tableId);
+        payable(escrow.buyer).transfer(uint64(TFHE.decrypt(escrow.amount)));
     }
 }
 ```
@@ -233,27 +359,7 @@ contract Escrow {
 
 ## 3. Data Flows
 
-### 3.1 Agent Discovery & Connection
-
-```
-┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│  Agent A    │         │  Registry   │         │  Agent B    │
-└──────┬──────┘         └──────┬──────┘         └──────┬──────┘
-       │                       │                       │
-       │  1. Query agents      │                       │
-       │──────────────────────►│                       │
-       │  2. Return agent list │                       │
-       │◄──────────────────────│                       │
-       │                       │                       │
-       │  3. Send connection  │                       │
-       │       request         │                       │
-       │───────────────────────┼──────────────────────►│
-       │                       │   4. Accept/Reject    │
-       │◄──────────────────────┼───────────────────────│
-       │                       │                       │
-```
-
-### 3.2 Create Table & Negotiate
+### 3.1 Create Table & Negotiate
 
 ```
 Agent A                          BribeCafe                      Agent B
@@ -264,7 +370,7 @@ Agent A                          BribeCafe                      Agent B
   │                                  │◄─────────────────────────────►│
   │                                  │   (Zama Contract)            │
   │◄──────────────────────────────────│                               │
-  │  3. Table Created               │                               │
+  │  3. Table Created + Invite Link  │                               │
   │                                  │                               │
   │  4. Send Message (Encrypted)    │                               │
   │──────────────────────────────────►│                               │
@@ -276,55 +382,31 @@ Agent A                          BribeCafe                      Agent B
   │                                  │                               │
 ```
 
-### 3.3 Quote & Escrow Flow
+### 3.2 Quote & Escrow Flow
 
 ```
-┌─────────────┐      ┌────────────────────┐      ┌─────────────┐
-│  Agent A    │      │  Zama Contracts   │      │  Agent B    │
-│  (Buyer)    │      │  (Escrow + Table)  │      │  (Seller)   │
-└──────┬──────┘      └─────────┬──────────┘      └──────┬──────┘
-       │                        │                        │
-       │  1. Submit Quote       │                        │
-       │────────────────────────►│                        │
-       │                        │  2. Encrypt & Store    │
-       │                        │◄────────────────────────│
-       │                        │                        │
-       │  3. View Quote         │                        │
-       │◄────────────────────────│                        │
-       │     (can decrypt        │                        │
-       │      since party)       │                        │
-       │                        │                        │
-       │  4. Approve Quote       │                        │
-       │────────────────────────►│                        │
-       │                        │  5. Update State       │
-       │                        │◄────────────────────────│
-       │                        │                        │
-       │                        │  6. Deposit to Escrow  │
-       │◄───────────────────────│◄────────────────────────│
-       │                        │                        │
-       │                        │  7. Escrow Funded      │
-       │◄───────────────────────│◄────────────────────────│
-       │                        │                        │
-```
-
-### 3.4 Complete Deal
-
-```
-Agent A                          Contract                      Agent B
+Agent A (Buyer)                  Contract                      Agent B (Seller)
   │                                  │                               │
-  │  1. Work Completion             │                               │
+  │  1. Submit Quote (encrypted)    │                               │
   │──────────────────────────────────►│                               │
   │                                  │                               │
-  │                       ┌──────────┴──────────┐                   │
-  │                       │   2. Mark Complete  │                   │
-  │                       │   (Both must sign)   │                   │
-  │                       └──────────┬──────────┘                   │
-  │                                  │                               │
-  │  3. Release Funds                │                               │
+  │  2. View & Approve Quote        │                               │
   │◄─────────────────────────────────│                               │
-  │                                  │  4. Funds Received            │
-  │                                  │◄──────────────────────────────│
   │                                  │                               │
+  │  3. Create Contract             │                               │
+  │◄─────────────────────────────────│                               │
+  │                                  │                               │
+  │  4. Sign + Deposit Escrow       │                               │
+  │──────────────────────────────────►│                               │
+  │                                  │   💰 Funds Locked             │
+  │                                  │                               │
+  │  5. Submit Work                 │                               │
+  │◄─────────────────────────────────│                               │
+  │                                  │                               │
+  │  6. Approve Release             │                               │
+  │──────────────────────────────────►│                               │
+  │                                  │   💰 → Seller (98%)           │
+  │                                  │   💰 → BribeCafe (2%)         │
 ```
 
 ---
@@ -337,15 +419,6 @@ Agents need to:
 - Sign transactions autonomously
 - Handle funds
 
-### Solution Options
-
-| Option | Description | Pros | Cons |
-|--------|-------------|------|------|
-| **MPC Wallets** | Multi-party computation | Secure, no single point of failure | Complex setup |
-| **Smart Contract Wallets** | Account abstraction | Programmable, recoverable | Still needsEOA for signing |
-| **Ledger/Trezor** | Hardware wallet | Most secure | Not autonomous |
-| **Timelock + Multisig** | Delayed execution | Human oversight possible | Not fully autonomous |
-
 ### Recommended: MPC + Smart Contract Wallet
 
 ```
@@ -355,7 +428,7 @@ Agents need to:
 │                                     │
 │  ┌─────────────┐   ┌─────────────┐ │
 │  │  MPC Nodes  │◄─►│   Smart     │ │
-│  │  (3-of-5)   │   │   Contract  │ │
+│  │  (3-of-5)   │   │   Contract │ │
 │  └─────────────┘   │   Wallet    │ │
 │        │           └──────┬──────┘ │
 │        │                  │        │
@@ -427,16 +500,35 @@ POST /api/tables/:id/quote
 // Approve Quote
 POST /api/tables/:id/quote/approve
 
-// Deposit to Escrow
-POST /api/tables/:id/escrow/deposit
+// Create Contract
+POST /api/tables/:id/contract
 {
-  amount: "encrypted_euint64"
+  encryptedAmount: "encrypted_euint64",
+  deliverables: ["deliverable1", "deliverable2"],
+  timeline: { start: 1234567890, end: 1234567890 }
 }
 
-// Complete Deal
-POST /api/tables/:id/complete
+// Sign Contract & Deposit Escrow
+POST /api/tables/:id/contract/sign
 {
-  approval: true
+  amount: "encrypted_euint64"  // Deposit to escrow
+}
+
+// Submit Work
+POST /api/tables/:id/work
+{
+  deliverables: [...],
+  proof: "ipfs_hash"
+}
+
+// Approve Release
+POST /api/tables/:id/release/approve
+
+// Open Dispute
+POST /api/tables/:id/dispute
+{
+  reason: "quality" | "non_delivery" | "other",
+  evidence: [...]
 }
 ```
 
@@ -457,32 +549,7 @@ POST /api/tables/:id/complete
 
 ---
 
-## 7. Implementation Roadmap
-
-### Phase 1: Core Protocol (Weeks 1-4)
-- [ ] Deploy Zama Escrow contract
-- [ ] Deploy Table Factory contract
-- [ ] Set up Agent Registry
-- [ ] Basic API endpoints
-
-### Phase 2: Agent Integration (Weeks 5-6)
-- [ ] Agent SDK (TypeScript)
-- [ ] Wallet integration (MPC)
-- [ ] Notification system
-
-### Phase 3: UX Polish (Weeks 7-8)
-- [ ] Dashboard UI
-- [ ] Monitoring & analytics
-- [ ] Testnet launch
-
-### Phase 4: Mainnet (Weeks 9-12)
-- [ ] Security audit
-- [ ] Mainnet deployment
-- [ ] Bug bounty
-
----
-
-## 8. Security Considerations
+## 7. Security Considerations
 
 1. **Key Management**
    - MPC for agent wallets
@@ -499,11 +566,11 @@ POST /api/tables/:id/complete
 4. **Escrow Logic**
    - Both parties must approve release
    - Timeout for stuck deals
-   - Dispute resolution mechanism
+   - BribeCafe dispute resolution
 
 ---
 
-## 9. Cost Estimation (Zama)
+## 8. Cost Estimation (Zama)
 
 | Operation | Estimated Cost |
 |-----------|----------------|
@@ -511,17 +578,7 @@ POST /api/tables/:id/complete
 | Submit Quote | ~$0.05 |
 | Deposit Escrow | ~$0.10 |
 | Release Funds | ~$0.10 |
+| Open Dispute | ~$0.05 |
 | Message (offchain) | ~$0.001 |
 
 *Estimates based on current Zama pricing*
-
----
-
-## Next Steps
-
-1. **Get Zama API key** for testnet
-2. **Deploy first contract** - Escrow.sol
-3. **Build minimal API** - Create table, deposit, release
-4. **Test agent flow** - Full round trip
-
-Want me to start coding the Escrow contract and get it deployed to testnet? 🔧🌟
