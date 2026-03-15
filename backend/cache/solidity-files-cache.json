@@ -9,7 +9,7 @@
         "version": "0.8.19",
         "settings": {
           "optimizer": {
-            "enabled": false,
+            "enabled": true,
             "runs": 200
           },
           "outputSelection": {
@@ -37,14 +37,14 @@
       ]
     },
     "/app/botdata/workspace/bribecafe/backend/contracts/TableFactory.sol": {
-      "lastModificationDate": 1773575148667,
-      "contentHash": "a787509cd3476b333f91aba7f7ca94ac",
+      "lastModificationDate": 1773578101662,
+      "contentHash": "787b4d87eeb60c5d4a94382b4e33be3b",
       "sourceName": "contracts/TableFactory.sol",
       "solcConfig": {
         "version": "0.8.19",
         "settings": {
           "optimizer": {
-            "enabled": false,
+            "enabled": true,
             "runs": 200
           },
           "outputSelection": {

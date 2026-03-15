@@ -94,8 +94,8 @@ contract TableFactory {
         address payable escrowAddr = createEscrow();
         escrows[tableId] = escrowAddr;
         
-        // Initialize escrow
-        Escrow(escrowAddr).initialize(msg.sender, participant, platformTreasury);
+        // Initialize escrow for this table
+        Escrow(escrowAddr).initializeForTable(tableId, msg.sender, participant, platformTreasury);
 
         // Create table
         tables[tableId] = Table({
@@ -216,18 +216,9 @@ contract TableFactory {
     // Internal functions
 
     function createEscrow() internal returns (address payable) {
-        // Create minimal proxy to Escrow implementation
-        bytes32 salt = keccak256(abi.encodePacked(block.timestamp, msg.sender));
-        address payable escrowAddr;
-        address impl = escrowImplementation;
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, 0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000)
-            mstore(add(ptr, 0x0d), shl(0x60, impl))
-            mstore(add(ptr, 0x1d), shl(0x60, salt))
-            escrowAddr := create2(0, ptr, 0x37, salt)
-        }
-        return escrowAddr;
+        // Simple approach: deploy new Escrow for each table
+        Escrow escrow = new Escrow();
+        return payable(address(escrow));
     }
 
     function _statusToString(
