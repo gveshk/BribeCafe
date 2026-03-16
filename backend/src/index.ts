@@ -41,14 +41,14 @@ export async function startApp(): Promise<void> {
         });
         app.log.info('Escrow service initialized');
       } catch (error: any) {
-        app.warn({ err: error }, 'Failed to initialize escrow service');
+        app.log.warn({ err: error }, 'Failed to initialize escrow service');
       }
     }
 
     // Don't await ready in test mode
     return;
   } catch (error) {
-    app.error(error);
+    app.log.error(error);
     throw error;
   }
 }
@@ -69,7 +69,7 @@ if (process.env.NODE_ENV !== 'test') {
     app.listen({ port, host: '0.0.0.0' });
     app.log.info(`Server running on port ${port}`);
   }).catch((error) => {
-    app.error(error);
+    app.log.error(error);
     process.exit(1);
   });
 }

@@ -16,6 +16,6 @@
     "types": ["node"],
     "noImplicitAny": false
   },
-  "include": ["src/**/*", "hardhat.config.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
 }

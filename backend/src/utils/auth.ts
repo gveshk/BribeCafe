@@ -67,7 +67,7 @@ export function verifyWalletSignature(
 
 // Generate JWT token for authenticated agent
 export async function generateToken(
-  fastify: FastifyInstance,
+  fastify: any,
   agentId: string,
   ownerAddress: string
 ): Promise<string> {
