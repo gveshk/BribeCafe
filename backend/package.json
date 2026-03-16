@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc && npx prisma generate",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "dev": "npx ts-node src/index.ts",
     "test": "jest",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
