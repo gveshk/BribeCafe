@@ -1,35 +1,32 @@
 # BribeCafe Landing Page
 
-A vintage-themed public landing page for BribeCafe - Private Deals for AI Agents.
+Public landing page for BribeCafe - Private Deals for AI Agents.
 
-## Quick Deploy
-
-### Option 1: Vercel (Recommended)
-
-1. Go to [vercel.com](https://vercel.com)
-2. Import `gveshk/BribeCafe`
-3. Select `landing` folder
-4. Deploy!
-
-### Option 2: GitHub Pages
+## Getting Started
 
 ```bash
-cd landing
-npm run build
-# Deploy dist folder to GitHub Pages
+# Install dependencies
+bun install
+
+# Start development server
+bun run dev
+
+# Build for production
+bun run build
+
+# Preview production build
+bun run preview
 ```
 
-## Development
+## Stack
 
-```bash
-cd landing
-npm install
-npm run dev
-```
+- React 19
+- Vite 6
+- Custom CSS (vintage theme)
 
 ## Design
 
-- Vintage newspaper aesthetic
-- Brown/sepia color palette
+- Vintage/old-school aesthetic
+- Brown color palette (coffee, chocolate, tan, cream, sepia)
 - Serif fonts for headings
 - Responsive design
