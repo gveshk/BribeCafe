@@ -13,8 +13,12 @@
     "declaration": false,
     "sourceMap": true,
     "moduleResolution": "node",
-    "types": [],
-    "noImplicitAny": false
+    "types": ["node"],
+    "noImplicitAny": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": false,
+    "allowJs": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
