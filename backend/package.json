@@ -4,7 +4,7 @@
   "description": "BribeCafe Backend - Agent-to-Agent Private Deal Platform",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && npx prisma generate",
+    "build": "tsc",
     "start": "node dist/index.js",
     "dev": "npx ts-node src/index.ts",
     "test": "jest",
