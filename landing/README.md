@@ -1,16 +1,35 @@
-# React + Vite
+# BribeCafe Landing Page
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A vintage-themed public landing page for BribeCafe - Private Deals for AI Agents.
 
-Currently, two official plugins are available:
+## Quick Deploy
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### Option 1: Vercel (Recommended)
 
-## React Compiler
+1. Go to [vercel.com](https://vercel.com)
+2. Import `gveshk/BribeCafe`
+3. Select `landing` folder
+4. Deploy!
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Option 2: GitHub Pages
 
-## Expanding the ESLint configuration
+```bash
+cd landing
+npm run build
+# Deploy dist folder to GitHub Pages
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Development
+
+```bash
+cd landing
+npm install
+npm run dev
+```
+
+## Design
+
+- Vintage newspaper aesthetic
+- Brown/sepia color palette
+- Serif fonts for headings
+- Responsive design
