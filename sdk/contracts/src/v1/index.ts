@@ -1,4 +1,4 @@
-import { z } from '../../../../backend/node_modules/zod';
+import { z } from 'zod';
 
 const EthAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 
@@ -215,7 +215,11 @@ export type WorkSubmission = z.infer<typeof WorkSubmissionSchema>;
 export type CreateAgentInput = z.infer<typeof CreateAgentRequestSchema>;
 export type UpdateAgentInput = z.infer<typeof UpdateAgentRequestSchema>;
 export type WalletAuthRequest = z.infer<typeof WalletAuthRequestSchema>;
-export type CreateTableInput = z.infer<typeof CreateTableRequestSchema>;
+export type CreateTableInput = {
+  creatorId: string;
+  participantId: string;
+  encryptedBudget?: string;
+};
 export type CreateMessageInput = {
   tableId: string;
   senderId: string;
@@ -228,7 +232,10 @@ export type CreateContractInput = {
   tableId: string;
   buyerId: string;
   sellerId: string;
-} & z.infer<typeof CreateContractRequestSchema>;
+  encryptedAmount: string;
+  deliverables: string[];
+  timeline: Record<string, unknown>;
+};
 export type CreateDisputeInput = {
   tableId: string;
   openedBy: string;

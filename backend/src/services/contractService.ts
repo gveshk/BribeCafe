@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { Prisma } from '@prisma/client';
 import prisma from '../db/prisma';
 import type { Contract, CreateContractInput, ContractTimeline } from '../types';
 
@@ -12,7 +13,7 @@ export class ContractService {
         sellerId: input.sellerId,
         encryptedAmount: input.encryptedAmount,
         deliverables: input.deliverables,
-        timeline: input.timeline as unknown as Record<string, unknown>,
+        timeline: input.timeline as Prisma.InputJsonValue,
       },
       include: {
         buyer: true,
@@ -91,7 +92,7 @@ export class ContractService {
     sellerId: string;
     encryptedAmount: string;
     deliverables: string[];
-    timeline: Record<string, unknown>;
+    timeline: Prisma.JsonValue;
     buyerSigned: boolean;
     sellerSigned: boolean;
     buyerSignedAt?: Date | null;
@@ -105,7 +106,7 @@ export class ContractService {
       sellerId: contract.sellerId,
       encryptedAmount: contract.encryptedAmount,
       deliverables: contract.deliverables,
-      timeline: contract.timeline as unknown as ContractTimeline,
+      timeline: (contract.timeline ?? {}) as unknown as ContractTimeline,
       buyerSigned: contract.buyerSigned,
       sellerSigned: contract.sellerSigned,
       buyerSignedAt: contract.buyerSignedAt || undefined,

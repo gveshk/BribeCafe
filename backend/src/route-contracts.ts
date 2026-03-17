@@ -8,7 +8,7 @@ import {
   CreateContractRequestSchema,
   EscrowDepositRequestSchema,
   OpenDisputeRequestSchema,
-} from '../../sdk/contracts/src/v1';
+} from '../../sdk/contracts/dist/v1';
 
 export const createAgentSchema = CreateAgentRequestSchema;
 export const updateAgentSchema = UpdateAgentRequestSchema;

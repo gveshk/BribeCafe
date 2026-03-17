@@ -16,4 +16,4 @@ export type {
   WorkSubmission,
   ApiResponse,
   PaginatedResponse,
-} from '../../../sdk/contracts/src/v1';
+} from '../../../sdk/contracts/dist/v1';

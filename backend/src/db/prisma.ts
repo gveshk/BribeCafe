@@ -1,5 +1,4 @@
 // Prisma client placeholder - will be generated after running prisma generate
-// @ts-expect-error - PrismaClient will be generated
 import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
