@@ -1,5 +1,13 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import {
+  createTableSchema,
+  sendMessageSchema,
+  submitQuoteSchema,
+  createContractSchema,
+  escrowDepositSchema,
+  openDisputeSchema,
+} from '../route-contracts';
 import { tableService } from '../services/tableService';
 import { messageService } from '../services/messageService';
 import { quoteService } from '../services/quoteService';
@@ -7,43 +15,10 @@ import { contractService } from '../services/contractService';
 import type { CreateTableInput } from '../types';
 
 // Validation schemas
-const createTableSchema = z.object({
-  participantId: z.string().uuid(),
-  encryptedBudget: z.string().optional(),
-});
-
 const listTablesSchema = z.object({
   status: z.enum(['active', 'completed', 'cancelled', 'disputed']).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   offset: z.coerce.number().min(0).optional(),
-});
-
-const sendMessageSchema = z.object({
-  content: z.string().min(1),
-  messageType: z.enum(['text', 'quote', 'document', 'contract', 'work', 'system']).default('text'),
-});
-
-const submitQuoteSchema = z.object({
-  encryptedAmount: z.string().min(1),
-  description: z.string().min(1),
-});
-
-const createContractSchema = z.object({
-  encryptedAmount: z.string().min(1),
-  deliverables: z.array(z.string()).min(1),
-  timeline: z.object({
-    start: z.number(),
-    end: z.number(),
-  }),
-});
-
-const escrowDepositSchema = z.object({
-  amount: z.string().min(1),
-});
-
-const openDisputeSchema = z.object({
-  reason: z.enum(['quality', 'non_delivery', 'other']),
-  evidence: z.array(z.string()),
 });
 
 export async function tableRoutes(fastify: FastifyInstance): Promise<void> {

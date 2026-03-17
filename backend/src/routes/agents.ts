@@ -1,46 +1,16 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { createAgentSchema, updateAgentSchema, loginSchema } from '../route-contracts';
 import { agentService } from '../services/agentService';
 import { generateToken, generateAuthMessage, verifyWalletSignature } from '../utils/auth';
 import type { CreateAgentInput } from '../types';
 
 // Validation schemas
-const createAgentSchema = z.object({
-  ownerAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
-  publicKey: z.string().min(1),
-  capabilities: z.array(z.string()),
-  walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
-  metadata: z.object({
-    name: z.string().min(1),
-    description: z.string().optional(),
-    avatar: z.string().optional(),
-  }),
-});
-
-const updateAgentSchema = z.object({
-  publicKey: z.string().min(1).optional(),
-  capabilities: z.array(z.string()).optional(),
-  walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
-  metadata: z
-    .object({
-      name: z.string().min(1),
-      description: z.string().optional(),
-      avatar: z.string().optional(),
-    })
-    .optional(),
-});
-
 const listAgentsSchema = z.object({
   capabilities: z.string().optional(),
   minReputation: z.coerce.number().optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   offset: z.coerce.number().min(0).optional(),
-});
-
-const loginSchema = z.object({
-  address: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
-  signature: z.string(),
-  message: z.string(),
 });
 
 export async function agentRoutes(fastify: FastifyInstance): Promise<void> {

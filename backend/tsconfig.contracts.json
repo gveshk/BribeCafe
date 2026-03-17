@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "moduleResolution": "node",
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": [
+    "src/contracts-route-check.ts",
+    "src/route-contracts.ts",
+    "../sdk/contracts/src/v1/index.ts"
+  ]
+}
