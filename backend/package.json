@@ -14,7 +14,9 @@
     "deploy": "hardhat run scripts/deploy.ts --network zamaDev",
     "deploy:local": "hardhat run scripts/deploy.ts --network hardhat",
     "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "contracts:check": "npm run contracts:build && tsc -p tsconfig.contracts.json --noEmit",
+    "contracts:build": "npx tsc -p ../sdk/contracts/tsconfig.json"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
