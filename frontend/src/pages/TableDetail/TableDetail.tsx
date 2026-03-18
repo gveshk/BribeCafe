@@ -18,8 +18,15 @@ export const TableDetail: React.FC = () => {
     escrow,
     selectTable,
     refreshTable,
-    loading 
   } = useApp();
+
+  const quoteAmount = Number(quote?.encryptedAmount ?? quote?.amount ?? 0);
+  const contractAmount = Number(contract?.encryptedAmount ?? contract?.amount ?? 0);
+  const approvedBy = Array.isArray(quote?.approvedBy)
+    ? quote.approvedBy
+    : quote?.approvedBy
+      ? [quote.approvedBy]
+      : [];
 
   const [showQuoteForm, setShowQuoteForm] = useState(false);
   const [showContractForm, setShowContractForm] = useState(false);
@@ -43,14 +50,13 @@ export const TableDetail: React.FC = () => {
 
   const handleSendMessage = async (content: string, type: 'text' | 'quote' | 'document') => {
     await api.sendMessage(selectedTable.id, content, type);
-    const msgs = await api.getMessages(selectedTable.id);
-    // This would update context, but for now we need to refresh
+    await refreshTable(selectedTable.id);
   };
 
   const handleSubmitQuote = async (amount: number, description: string) => {
     setSubmitting(true);
     try {
-      await api.submitQuote(selectedTable.id, amount, description);
+      await api.submitQuote(selectedTable.id, amount.toString(), description);
       await refreshTable(selectedTable.id);
       setShowQuoteForm(false);
     } finally {
@@ -71,7 +77,7 @@ export const TableDetail: React.FC = () => {
   const handleCreateContract = async (amount: number, deliverables: string[], timeline: { start: number; end: number }) => {
     setSubmitting(true);
     try {
-      await api.createContract(selectedTable.id, amount, deliverables, timeline);
+      await api.createContract(selectedTable.id, amount.toString(), deliverables, timeline);
       await refreshTable(selectedTable.id);
       setShowContractForm(false);
     } finally {
@@ -82,7 +88,7 @@ export const TableDetail: React.FC = () => {
   const handleSignContract = async () => {
     setSubmitting(true);
     try {
-      await api.signContract(selectedTable.id);
+      await api.signContract(selectedTable.id, contractAmount.toString());
       await refreshTable(selectedTable.id);
     } finally {
       setSubmitting(false);
@@ -93,7 +99,7 @@ export const TableDetail: React.FC = () => {
     if (!quote) return;
     setSubmitting(true);
     try {
-      await api.depositEscrow(selectedTable.id, quote.amount);
+      await api.depositEscrow(selectedTable.id, quoteAmount.toString());
       await refreshTable(selectedTable.id);
     } finally {
       setSubmitting(false);
@@ -122,8 +128,8 @@ export const TableDetail: React.FC = () => {
   };
 
   const canSubmitQuote = !quote && !isBuyer;
-  const canApproveQuote = quote && !quote.approvedBy.includes(currentAgent?.id || '') && isBuyer;
-  const canCreateContract = quote && quote.approvedBy.length > 0 && !contract;
+  const canApproveQuote = quote && !approvedBy.includes(currentAgent?.id || '') && isBuyer;
+  const canCreateContract = quote && approvedBy.length > 0 && !contract;
   const canSignContract = contract && (
     (isBuyer && !contract.buyerSigned) || 
     (!isBuyer && !contract.sellerSigned)
@@ -208,13 +214,13 @@ export const TableDetail: React.FC = () => {
             {quote ? (
               <div>
                 <p style={{ fontSize: theme.typography.fontSize['2xl'], fontWeight: theme.typography.fontWeight.bold, margin: 0 }}>
-                  ${quote.amount.toLocaleString()}
+                  ${quoteAmount.toLocaleString()}
                 </p>
                 <p style={{ color: theme.colors.neutral[500], fontSize: theme.typography.fontSize.sm }}>
                   {quote.description}
                 </p>
-                <Badge variant={quote.approvedBy.length > 0 ? 'success' : 'warning'}>
-                  {quote.approvedBy.length > 0 ? 'Approved' : 'Pending'}
+                <Badge variant={approvedBy.length > 0 ? 'success' : 'warning'}>
+                  {approvedBy.length > 0 ? 'Approved' : 'Pending'}
                 </Badge>
               </div>
             ) : (
@@ -227,7 +233,7 @@ export const TableDetail: React.FC = () => {
             <Card variant="outlined" padding="md">
               <h3 style={{ margin: `0 0 ${theme.spacing.sm} 0` }}>Contract</h3>
               <p style={{ fontWeight: theme.typography.fontWeight.bold }}>
-                ${contract.amount.toLocaleString()}
+                ${contractAmount.toLocaleString()}
               </p>
               <div style={{ display: 'flex', gap: theme.spacing.sm, marginBottom: theme.spacing.sm }}>
                 <Badge variant={contract.buyerSigned ? 'success' : 'warning'}>

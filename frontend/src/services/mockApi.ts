@@ -16,7 +16,7 @@ export const initializeMockData = () => {
   const mockAgents: Agent[] = [
     {
       id: 'agent-001',
-      owner: '0x742d35Cc6634C0532925a3b844Bc9e7595f0eB1E',
+      ownerAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0eB1E',
       publicKey: '0x04a...',
       capabilities: ['defi-research', 'trading', 'analytics'],
       reputationScore: 92,
@@ -31,7 +31,7 @@ export const initializeMockData = () => {
     },
     {
       id: 'agent-002',
-      owner: '0x9B3a54D092fF1F4c3a9bC7fE1d2C8F3a1E5b7D9C',
+      ownerAddress: '0x9B3a54D092fF1F4c3a9bC7fE1d2C8F3a1E5b7D9C',
       publicKey: '0x05b...',
       capabilities: ['smart-contract-audit', 'security', 'development'],
       reputationScore: 85,
@@ -46,7 +46,7 @@ export const initializeMockData = () => {
     },
     {
       id: 'agent-003',
-      owner: '0x1234567890abcdef1234567890abcdef12345678',
+      ownerAddress: '0x1234567890abcdef1234567890abcdef12345678',
       publicKey: '0x06c...',
       capabilities: ['nft-minting', 'art-generation', 'marketing'],
       reputationScore: 78,
@@ -119,8 +119,8 @@ export const initializeMockData = () => {
   const mockQuote: Quote = {
     id: 'quote-001',
     tableId: 'table-001',
-    submitterId: 'agent-002',
-    amount: 5000,
+    sellerId: 'agent-002',
+    encryptedAmount: '5000',
     description: 'Full security audit of 5 smart contracts with detailed report',
     approvedBy: [],
     createdAt: Date.now() - 3600000,
@@ -132,8 +132,8 @@ export const initializeMockData = () => {
   // Create mock escrow
   const mockEscrow: Escrow = {
     tableId: 'table-002',
-    amount: 5000,
-    fee: 100,
+    amount: '5000',
+    fee: '100',
     buyerAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0eB1E',
     sellerAddress: '0x9B3a54D092fF1F4c3a9bC7fE1d2C8F3a1E5b7D9C',
     status: 'released',
@@ -204,8 +204,8 @@ export const submitQuote = (tableId: string, submitterId: string, amount: number
   const quote: Quote = {
     id: `quote-${Date.now()}`,
     tableId,
-    submitterId,
-    amount,
+sellerId: submitterId,
+    encryptedAmount: amount.toString(),
     description,
     approvedBy: [],
     createdAt: Date.now(),
@@ -217,8 +217,9 @@ export const submitQuote = (tableId: string, submitterId: string, amount: number
 
 export const approveQuote = (tableId: string, approverId: string): Quote | undefined => {
   const quote = quotes.get(tableId);
-  if (quote && !quote.approvedBy.includes(approverId)) {
-    quote.approvedBy.push(approverId);
+  const approvedBy = Array.isArray(quote?.approvedBy) ? quote.approvedBy : quote?.approvedBy ? [quote.approvedBy] : [];
+  if (quote && !approvedBy.includes(approverId)) {
+    quote.approvedBy = [...approvedBy, approverId];
     quote.updatedAt = Date.now();
   }
   return quote;
@@ -235,7 +236,7 @@ export const createContract = (
   const contract: Contract = {
     id: `contract-${Date.now()}`,
     tableId,
-    amount,
+    encryptedAmount: amount.toString(),
     deliverables: deliverables.map((d, i) => ({
       id: `deliverable-${i}`,
       description: d,
@@ -267,8 +268,8 @@ export const depositEscrow = (tableId: string, amount: number, buyerAddress: str
   const fee = Math.round(amount * 0.02);
   const escrow: Escrow = {
     tableId,
-    amount,
-    fee,
+    amount: amount.toString(),
+    fee: fee.toString(),
     buyerAddress,
     sellerAddress,
     status: 'deposited',
@@ -301,7 +302,7 @@ export const openDispute = (tableId: string, openerId: string, reason: 'quality'
   const dispute: Dispute = {
     id: `dispute-${Date.now()}`,
     tableId,
-    openedBy: table?.creatorId === openerId ? 'buyer' : 'seller',
+    openedBy: openerId,
     reason,
     evidence,
     status: 'open',
