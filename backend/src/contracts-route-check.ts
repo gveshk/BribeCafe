@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import {
   CreateAgentRequestSchema,
-  WalletAuthRequestSchema,
   CreateTableRequestSchema,
   SendMessageRequestSchema,
   SubmitQuoteRequestSchema,
@@ -11,7 +10,6 @@ import {
 } from '../../sdk/contracts/dist/v1';
 import {
   createAgentSchema,
-  loginSchema,
   createTableSchema,
   sendMessageSchema,
   submitQuoteSchema,
@@ -27,7 +25,6 @@ type IsEqual<A, B> =
     : false;
 
 type _CreateAgentMatches = Assert<IsEqual<z.infer<typeof createAgentSchema>, z.infer<typeof CreateAgentRequestSchema>>>;
-type _LoginMatches = Assert<IsEqual<z.infer<typeof loginSchema>, z.infer<typeof WalletAuthRequestSchema>>>;
 type _CreateTableMatches = Assert<IsEqual<z.infer<typeof createTableSchema>, z.infer<typeof CreateTableRequestSchema>>>;
 type _SendMessageMatches = Assert<IsEqual<z.infer<typeof sendMessageSchema>, z.infer<typeof SendMessageRequestSchema>>>;
 type _SubmitQuoteMatches = Assert<IsEqual<z.infer<typeof submitQuoteSchema>, z.infer<typeof SubmitQuoteRequestSchema>>>;

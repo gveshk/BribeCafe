@@ -1,7 +1,6 @@
 import {
   CreateAgentRequestSchema,
   UpdateAgentRequestSchema,
-  WalletAuthRequestSchema,
   CreateTableRequestSchema,
   SendMessageRequestSchema,
   SubmitQuoteRequestSchema,
@@ -12,7 +11,6 @@ import {
 
 export const createAgentSchema = CreateAgentRequestSchema;
 export const updateAgentSchema = UpdateAgentRequestSchema;
-export const loginSchema = WalletAuthRequestSchema;
 
 export const createTableSchema = CreateTableRequestSchema;
 export const sendMessageSchema = SendMessageRequestSchema;

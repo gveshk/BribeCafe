@@ -125,18 +125,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         throw new Error('Failed to connect wallet');
       }
 
-      // In production, would authenticate with backend
-      // For now, use wallet address as agent ID (demo mode)
-      const agentId = address; // In real app, look up agent by wallet
-      
-      // Set auth in API service
-      api.setAuth(agentId, address);
+      let agentData: Agent | null = null;
+      let tablesData: { items: Table[] } = { items: [] };
 
-      // Load initial data
-      const [agentData, tablesData] = await Promise.all([
-        DEMO_MODE ? null : api.getCurrentAgent().catch(() => null),
-        api.listTables(),
-      ]);
+      if (!DEMO_MODE) {
+        const challenge = await api.createAuthChallenge(address);
+        const signature = await walletService.signMessage(challenge.message);
+        const loginResponse = await api.loginWithWallet({
+          address,
+          signature,
+          challengeId: challenge.challengeId,
+          nonce: challenge.nonce,
+        });
+
+        api.setAuth(loginResponse.agent.id, address, loginResponse.token, loginResponse.refreshToken);
+
+        [agentData, tablesData] = await Promise.all([
+          api.getCurrentAgent().catch(() => null),
+          api.listTables(),
+        ]);
+      } else {
+        api.setAuth(address, address);
+      }
 
       // For demo mode, use mock data if no backend
       if (DEMO_MODE || !agentData) {
@@ -222,7 +232,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Logout
   const logout = useCallback(() => {
     walletService.disconnect();
-    api.clearAuth();
+    api.logout().catch(() => undefined);
     wsService.disconnect();
     
     setIsAuthenticated(false);

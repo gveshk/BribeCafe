@@ -1,5 +1,4 @@
-import type { FastifyInstance } from 'fastify';
-import type { AuthPayload } from './types';
+import type { AuthPayload } from '../utils/auth';
 
 declare module 'fastify' {
   interface FastifyInstance {
