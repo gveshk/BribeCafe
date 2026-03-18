@@ -195,3 +195,124 @@ This is the largest frontend risk area.
 
 ## Final verdict
 BribeCafe has a promising foundation and coherent domain intent, but it currently needs **contract alignment + security hardening + test reliability** work before it can be considered seamless or production-ready. Addressing the Phase 1 items will deliver the biggest quality and confidence uplift with the fastest impact.
+
+---
+
+## Production recreation ticket plan (implementation-ready)
+
+The following ticket plan translates the audit into an executable backlog for rebuilding BribeCafe to production readiness.
+
+### Ticket BRIBE-001 — Canonical API contract package (blocker)
+- Goal: remove frontend/backend contract drift using one shared source of truth.
+- Deliverables:
+  - Shared schemas + types package for all API DTOs.
+  - Generated backend route typings and frontend client typings.
+  - CI contract compatibility check.
+- Acceptance criteria:
+  - No duplicated domain DTO definitions in frontend/backend.
+  - Contract drift fails CI.
+
+### Ticket BRIBE-002 — Wallet auth replay protection + secret hardening (blocker)
+- Goal: make authentication production-safe.
+- Deliverables:
+  - Nonce challenge persistence with TTL and one-time consumption.
+  - Strict JWT secret validation (fail-fast in non-dev).
+  - Auth flow update in frontend.
+- Acceptance criteria:
+  - Reused auth challenge is rejected.
+  - Expired challenges are rejected.
+
+### Ticket BRIBE-003 — Lifecycle state machine rewrite (blocker)
+- Goal: formalize legal transitions for table/contract/escrow lifecycle.
+- Deliverables:
+  - Explicit state machine module and transition guards.
+  - DB migration and transition audit logging.
+- Acceptance criteria:
+  - Illegal transitions return deterministic error codes.
+  - All workflow handlers consume state machine rules.
+
+### Ticket BRIBE-004 — Backend orchestration layer extraction
+- Goal: move multi-step workflow logic out of route handlers.
+- Deliverables:
+  - Use-case services (`ApproveQuote`, `CreateContract`, `SignContract`, etc.).
+  - Transaction boundaries for multi-write operations.
+- Acceptance criteria:
+  - Routes become thin request/response adapters.
+  - Use-cases unit tested with role/state coverage.
+
+### Ticket BRIBE-005 — Escrow end-to-end completion
+- Goal: connect UI and API to real escrow behavior.
+- Deliverables:
+  - Implement missing escrow endpoints and align frontend calls.
+  - Persist tx hash/status/finality metadata.
+  - Add async confirmation update path.
+- Acceptance criteria:
+  - Escrow actions match on-chain status reliably.
+  - UI no longer depends on placeholder escrow responses.
+
+### Ticket BRIBE-006 — Frontend state architecture rebuild
+- Goal: replace oversized context with production-ready state boundaries.
+- Deliverables:
+  - Split AppContext by domain.
+  - Add query cache for server state.
+  - Standardized mutation/error handling.
+- Acceptance criteria:
+  - No single context responsible for full app state.
+  - Optimistic updates and retries implemented for critical actions.
+
+### Ticket BRIBE-007 — Realtime pipeline hardening
+- Goal: reliable websocket events for lifecycle updates.
+- Deliverables:
+  - Authenticated websocket/event gateway.
+  - Reconnect + resync mechanism with sequencing.
+- Acceptance criteria:
+  - Reconnect does not lose domain events.
+  - Event authorization enforced per table membership.
+
+### Ticket BRIBE-008 — Error model + observability standardization
+- Goal: consistent error semantics and actionable telemetry.
+- Deliverables:
+  - Unified error envelope with request ID.
+  - Structured logs, metrics, and tracing instrumentation.
+- Acceptance criteria:
+  - All API errors conform to shared schema.
+  - Key business metrics visible in dashboards.
+
+### Ticket BRIBE-009 — Security and abuse protections
+- Goal: strengthen production security baseline.
+- Deliverables:
+  - Rate limiting for auth and write endpoints.
+  - Authorization policy audit for all role-sensitive operations.
+  - Security headers/CORS environment policies.
+- Acceptance criteria:
+  - Security checklist passes in CI.
+  - Pen-test-style authz tests pass.
+
+### Ticket BRIBE-010 — Test stack rebuild + CI gates (blocker)
+- Goal: restore confidence and regression prevention.
+- Deliverables:
+  - Fix failing backend/frontend test harnesses.
+  - Add contract, integration, and E2E workflow tests.
+  - Enforce required checks in CI.
+- Acceptance criteria:
+  - Green default branch.
+  - Merge blocked on failing test/lint/typecheck.
+
+### Ticket BRIBE-011 — Release engineering + migration safety
+- Goal: safe production deployment and rollback behavior.
+- Deliverables:
+  - Deployment pipeline with migration prechecks.
+  - Backward-compatibility checks for API versioning.
+  - Rollback runbooks.
+- Acceptance criteria:
+  - Release checklist automated and required.
+  - DB migration rollback tested.
+
+### Ticket BRIBE-012 — Production readiness signoff
+- Goal: formal go-live gate with objective criteria.
+- Deliverables:
+  - SLOs, incident runbooks, and disaster scenarios.
+  - Dry-run launch validation across auth/deals/escrow/dispute.
+- Acceptance criteria:
+  - All blocker tickets closed.
+  - Launch review approved by engineering + product + security.
