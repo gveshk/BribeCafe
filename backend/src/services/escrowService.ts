@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { ethers } from 'ethers';
 import prisma from '../db/prisma';
-import type { EscrowEvent, EscrowStatus, EscrowEventType } from '../types';
+import type { EscrowStatus, EscrowEventType } from '../types';
 import { tableService } from './tableService';
 
 const DEFAULT_REQUIRED_CONFIRMATIONS = 3;
@@ -209,7 +209,9 @@ export class EscrowService {
     };
   }
 
-  async getLatestEvent(tableId: string): Promise<Pick<EscrowEvent, 'txHash' | 'eventType'> & {
+  async getLatestEvent(tableId: string): Promise<{
+    txHash: string | null;
+    eventType: string;
     chainId: number | null;
     confirmations: number;
     settlementStatus: string;

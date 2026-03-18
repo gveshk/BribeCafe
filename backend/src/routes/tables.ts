@@ -30,6 +30,85 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     }
   };
 
+  const withEscrow = async <T>(reply: FastifyReply, action: () => Promise<T>): Promise<T | undefined> => {
+    try {
+      return await action();
+    } catch (error: any) {
+      const message = error?.message || 'Escrow transaction failed';
+      if (message.includes('Escrow service not initialized')) {
+        reply.status(503).send({ error: 'Escrow service unavailable' });
+        return;
+      }
+
+      fastify.log.error({ err: error }, 'Escrow route failed');
+      reply.status(500).send({ error: message });
+      return;
+    }
+  };
+
+  const approveEscrow = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+
+    const table = await tableService.findById(id);
+    if (!table) {
+      return reply.status(404).send({ error: 'Table not found' });
+    }
+
+    const isBuyer = table.creatorId === request.auth.agentId;
+    const isSeller = table.participantId === request.auth.agentId;
+
+    if (!isBuyer && !isSeller) {
+      return reply.status(403).send({ error: 'Not authorized' });
+    }
+
+    const tx = await withEscrow(reply, () => (
+      isBuyer ? escrowService.buyerApprove(id) : escrowService.sellerApprove(id)
+    ));
+
+    if (!tx) {
+      return;
+    }
+
+    return reply.send({
+      success: true,
+      approvedBy: isBuyer ? 'buyer' : 'seller',
+      txHash: tx.txHash,
+      settlementStatus: 'pending',
+    });
+  };
+
+  const openEscrowDispute = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as z.infer<typeof openDisputeSchema>;
+
+    const table = await tableService.findById(id);
+    if (!table) {
+      return reply.status(404).send({ error: 'Table not found' });
+    }
+
+    const isParticipant = table.creatorId === request.auth.agentId ||
+      table.participantId === request.auth.agentId;
+
+    if (!isParticipant) {
+      return reply.status(403).send({ error: 'Not authorized' });
+    }
+
+    const { disputeService } = await import('../services/disputeService');
+    const dispute = await disputeService.create({
+      tableId: id,
+      openedBy: request.auth.agentId,
+      reason: body.reason,
+      evidence: body.evidence,
+    });
+
+    const tx = await withEscrow(reply, () => escrowService.openDispute(id));
+    if (!tx) {
+      return;
+    }
+
+    return reply.status(201).send({ dispute, txHash: tx.txHash, settlementStatus: 'pending' });
+  };
+
   fastify.post('/', {
     preHandler: [fastify.verifyToken],
     schema: { body: createTableSchema },
@@ -320,7 +399,10 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(403).send({ error: 'Only the buyer can deposit to escrow' });
     }
 
-    const tx = await escrowService.deposit(id, body.amount);
+    const tx = await withEscrow(reply, () => escrowService.deposit(id, body.amount));
+    if (!tx) {
+      return;
+    }
 
     return reply.send({
       success: true,
@@ -331,32 +413,14 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     });
   });
 
+  fastify.post('/:id/escrow/approve', {
+    preHandler: [fastify.verifyToken],
+  }, approveEscrow);
+
+  // Backward-compatible alias used by older frontend builds.
   fastify.post('/:id/escrow/release/approve', {
     preHandler: [fastify.verifyToken],
-  }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string };
-
-    const table = await tableService.findById(id);
-    if (!table) {
-      return reply.status(404).send({ error: 'Table not found' });
-    }
-
-    const isBuyer = table.creatorId === request.auth.agentId;
-    const isSeller = table.participantId === request.auth.agentId;
-
-    if (!isBuyer && !isSeller) {
-      return reply.status(403).send({ error: 'Not authorized' });
-    }
-
-    const tx = isBuyer ? await escrowService.buyerApprove(id) : await escrowService.sellerApprove(id);
-
-    return reply.send({
-      success: true,
-      approvedBy: isBuyer ? 'buyer' : 'seller',
-      txHash: tx.txHash,
-      settlementStatus: 'pending',
-    });
-  });
+  }, approveEscrow);
 
   fastify.post('/:id/escrow/cancel', {
     preHandler: [fastify.verifyToken],
@@ -372,16 +436,29 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(403).send({ error: 'Only the buyer can cancel escrow' });
     }
 
-    const tx = await escrowService.cancel(id);
+    const tx = await withEscrow(reply, () => escrowService.cancel(id));
+    if (!tx) {
+      return;
+    }
+
     return reply.send({ success: true, txHash: tx.txHash, settlementStatus: 'pending' });
   });
+
+  fastify.post('/:id/escrow/dispute', {
+    preHandler: [fastify.verifyToken],
+    schema: { body: openDisputeSchema },
+  }, openEscrowDispute);
 
   fastify.get('/:id/escrow/status', {
     preHandler: [fastify.verifyToken, requireParticipant],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
 
-    const status = await escrowService.getStatus(id);
+    const status = await withEscrow(reply, () => escrowService.getStatus(id));
+    if (!status) {
+      return;
+    }
+
     const event = await escrowService.getLatestEvent(id);
 
     return reply.send({
@@ -398,34 +475,7 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post('/:id/dispute', {
     preHandler: [fastify.verifyToken],
     schema: { body: openDisputeSchema },
-  }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string };
-    const body = request.body as z.infer<typeof openDisputeSchema>;
-
-    const table = await tableService.findById(id);
-    if (!table) {
-      return reply.status(404).send({ error: 'Table not found' });
-    }
-
-    const isParticipant = table.creatorId === request.auth.agentId ||
-      table.participantId === request.auth.agentId;
-
-    if (!isParticipant) {
-      return reply.status(403).send({ error: 'Not authorized' });
-    }
-
-    const { disputeService } = await import('../services/disputeService');
-    const dispute = await disputeService.create({
-      tableId: id,
-      openedBy: request.auth.agentId,
-      reason: body.reason,
-      evidence: body.evidence,
-    });
-
-    const tx = await escrowService.openDispute(id);
-
-    return reply.status(201).send({ dispute, txHash: tx.txHash, settlementStatus: 'pending' });
-  });
+  }, openEscrowDispute);
 
   fastify.get('/:id/dispute', {
     preHandler: [fastify.verifyToken, requireParticipant],
