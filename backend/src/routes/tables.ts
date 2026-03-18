@@ -13,6 +13,7 @@ import { messageService } from '../services/messageService';
 import { quoteService } from '../services/quoteService';
 import { contractService } from '../services/contractService';
 import type { CreateTableInput } from '../types';
+import { eventBroker } from '../services/eventBroker';
 
 // Validation schemas
 const listTablesSchema = z.object({
@@ -60,6 +61,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       senderId: creatorId,
       content: 'Table created',
       messageType: 'system',
+    });
+
+    eventBroker.publish({
+      type: 'table:created',
+      tableId: table.id,
+      payload: { table },
     });
 
     return reply.status(201).send({ table });
@@ -149,6 +156,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       messageType,
     });
 
+    eventBroker.publish({
+      type: 'message:new',
+      tableId: id,
+      payload: { message, tableId: id },
+    });
+
     return reply.status(201).send({ message });
   });
 
@@ -188,6 +201,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       messageType: 'quote',
     });
 
+    eventBroker.publish({
+      type: 'quote:submitted',
+      tableId: id,
+      payload: { quote, tableId: id },
+    });
+
     return reply.status(201).send({ quote });
   });
 
@@ -225,6 +244,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       senderId: request.auth.agentId,
       content: 'Quote approved',
       messageType: 'system',
+    });
+
+    eventBroker.publish({
+      type: 'quote:approved',
+      tableId: id,
+      payload: { quote: approvedQuote, tableId: id },
     });
 
     return reply.send({ quote: approvedQuote });
@@ -271,6 +296,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       senderId: table.participantId,
       content: 'Contract created',
       messageType: 'contract',
+    });
+
+    eventBroker.publish({
+      type: 'contract:created',
+      tableId: id,
+      payload: { contract, tableId: id },
     });
 
     return reply.status(201).send({ contract });
@@ -326,6 +357,22 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       await tableService.updateStatus(id, 'completed');
     }
 
+    if (updatedContract) {
+      eventBroker.publish({
+        type: 'contract:signed',
+        tableId: id,
+        payload: { contract: updatedContract, tableId: id, signer: request.auth.agentId },
+      });
+    }
+
+    if (bothSigned) {
+      eventBroker.publish({
+        type: 'table:updated',
+        tableId: id,
+        payload: { tableId: id, status: 'completed' },
+      });
+    }
+
     return reply.send({ 
       contract: updatedContract,
       bothSigned,
@@ -354,6 +401,17 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     // In production, this would call escrowService.deposit()
+    const escrow = {
+      amount,
+      status: 'deposited',
+    };
+
+    eventBroker.publish({
+      type: 'escrow:deposited',
+      tableId: id,
+      payload: { escrow, tableId: id },
+    });
+
     return reply.send({
       success: true,
       tableId: id,
@@ -379,6 +437,17 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     if (!isBuyer && !isSeller) {
       return reply.status(403).send({ error: 'Not authorized' });
     }
+
+    const escrow = {
+      approvedBy: isBuyer ? 'buyer' : 'seller',
+      status: 'released',
+    };
+
+    eventBroker.publish({
+      type: 'escrow:released',
+      tableId: id,
+      payload: { escrow, tableId: id },
+    });
 
     return reply.send({
       success: true,
@@ -435,6 +504,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       openedBy: request.auth.agentId,
       reason,
       evidence,
+    });
+
+    eventBroker.publish({
+      type: 'dispute:opened',
+      tableId: id,
+      payload: { dispute, tableId: id },
     });
 
     return reply.status(201).send({ dispute });

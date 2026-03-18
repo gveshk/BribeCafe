@@ -1,7 +1,7 @@
 // WebSocket Service for real-time updates
 import { Table, Message, Quote, Contract, Escrow } from '../types';
 
-type EventType = 
+type EventType =
   | 'table:created'
   | 'table:updated'
   | 'message:new'
@@ -16,12 +16,27 @@ type EventType =
 
 type EventCallback<T> = (data: T) => void;
 
-interface WebSocketMessage {
+interface VersionedEvent {
+  version: 1;
+  seq: number;
   type: EventType;
+  tableId: string;
+  timestamp: string;
   payload: unknown;
 }
 
-class WebSocketService {
+interface WebSocketServerEnvelope {
+  type: 'connected' | 'subscribed' | 'unsubscribed' | 'error' | 'event' | 'pong';
+  payload?: unknown;
+}
+
+interface DeltaResponse {
+  fromSeq: number;
+  toSeq: number;
+  events: VersionedEvent[];
+}
+
+export class WebSocketService {
   private ws: WebSocket | null = null;
   private url: string;
   private reconnectAttempts = 0;
@@ -31,77 +46,57 @@ class WebSocketService {
   private isConnecting = false;
   private shouldReconnect = true;
   private token: string | null = null;
+  private subscribedTables = new Set<string>();
+  private lastSeq = 0;
+  private seenSeq = new Set<number>();
 
   constructor(url?: string) {
     this.url = url || import.meta.env.VITE_WS_URL || 'ws://localhost:3000/ws';
   }
 
-  /**
-   * Set authentication token
-   */
   setToken(token: string): void {
     this.token = token;
-    // Reconnect with new token if already connected
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.sendAuth();
-    }
   }
 
-  /**
-   * Connect to WebSocket server
-   */
-  connect(): Promise<void> {
+  async connect(): Promise<void> {
+    if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {
+      return;
+    }
+
+    this.isConnecting = true;
+
     return new Promise((resolve, reject) => {
-      if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {
+      const wsUrl = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url;
+      this.ws = new WebSocket(wsUrl);
+
+      this.ws.onopen = () => {
+        this.isConnecting = false;
+        this.reconnectAttempts = 0;
+        this.resubscribeAll();
         resolve();
-        return;
-      }
+      };
 
-      this.isConnecting = true;
+      this.ws.onmessage = (event) => {
+        try {
+          const message: WebSocketServerEnvelope = JSON.parse(event.data);
+          this.handleEnvelope(message);
+        } catch (err) {
+          console.error('[WS] Failed to parse message:', err);
+        }
+      };
 
-      try {
-        this.ws = new WebSocket(this.url);
+      this.ws.onclose = () => {
+        this.isConnecting = false;
+        this.attemptReconnect();
+      };
 
-        this.ws.onopen = () => {
-          console.log('[WS] Connected');
-          this.isConnecting = false;
-          this.reconnectAttempts = 0;
-          this.sendAuth();
-          resolve();
-        };
-
-        this.ws.onmessage = (event) => {
-          try {
-            const message: WebSocketMessage = JSON.parse(event.data);
-            this.handleMessage(message);
-          } catch (err) {
-            console.error('[WS] Failed to parse message:', err);
-          }
-        };
-
-        this.ws.onclose = () => {
-          console.log('[WS] Disconnected');
-          this.isConnecting = false;
-          this.attemptReconnect();
-        };
-
-        this.ws.onerror = (error) => {
-          console.error('[WS] Error:', error);
-          this.isConnecting = false;
-          if (this.reconnectAttempts === 0) {
-            reject(error);
-          }
-        };
-      } catch (error) {
+      this.ws.onerror = (error) => {
         this.isConnecting = false;
         reject(error);
-      }
+      };
     });
   }
 
-  /**
-   * Disconnect from WebSocket server
-   */
   disconnect(): void {
     this.shouldReconnect = false;
     if (this.ws) {
@@ -110,91 +105,121 @@ class WebSocketService {
     }
   }
 
-  /**
-   * Send authentication message
-   */
-  private sendAuth(): void {
-    if (this.token && this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({
-        type: 'auth',
-        token: this.token,
-      }));
-    }
-  }
-
-  /**
-   * Attempt to reconnect
-   */
   private attemptReconnect(): void {
     if (!this.shouldReconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('[WS] Max reconnect attempts reached');
       return;
     }
 
     this.reconnectAttempts++;
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
-    console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
-
-    setTimeout(() => {
-      this.connect().catch(() => {
-        // Will retry automatically
-      });
+    setTimeout(async () => {
+      try {
+        await this.connect();
+        await this.resync();
+      } catch {
+        // retry via onclose
+      }
     }, delay);
   }
 
-  /**
-   * Handle incoming WebSocket message
-   */
-  private handleMessage(message: WebSocketMessage): void {
-    const callbacks = this.listeners.get(message.type);
-    if (callbacks) {
-      callbacks.forEach((callback) => {
-        try {
-          callback(message.payload as never);
-        } catch (err) {
-          console.error(`[WS] Callback error for ${message.type}:`, err);
-        }
-      });
+  private async resync(): Promise<void> {
+    if (!this.token) {
+      return;
+    }
+
+    const base = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const response = await fetch(`${base}/api/events/since/${this.lastSeq}`, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+      },
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const delta = (await response.json()) as DeltaResponse;
+    for (const event of delta.events) {
+      this.acceptEvent(event);
     }
   }
 
-  /**
-   * Subscribe to an event
-   */
+  private handleEnvelope(message: WebSocketServerEnvelope): void {
+    if (message.type !== 'event' || !message.payload) {
+      return;
+    }
+
+    this.acceptEvent(message.payload as VersionedEvent);
+  }
+
+  private acceptEvent(event: VersionedEvent): void {
+    if (event.version !== 1) {
+      return;
+    }
+
+    if (this.seenSeq.has(event.seq)) {
+      return;
+    }
+
+    if (event.seq <= this.lastSeq) {
+      return;
+    }
+
+    this.seenSeq.add(event.seq);
+    this.lastSeq = Math.max(this.lastSeq, event.seq);
+
+    const callbacks = this.listeners.get(event.type);
+    if (callbacks) {
+      callbacks.forEach((callback) => callback(event.payload as never));
+    }
+  }
+
   subscribe<T>(type: EventType, callback: EventCallback<T>): () => void {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set());
     }
-    this.listeners.get(type)!.add(callback as EventCallback<unknown>);
 
-    // Return unsubscribe function
+    this.listeners.get(type)!.add(callback as EventCallback<unknown>);
     return () => {
       this.listeners.get(type)?.delete(callback as EventCallback<unknown>);
     };
   }
 
-  /**
-   * Subscribe to table events
-   */
+  subscribeToTable(tableId: string): void {
+    this.subscribedTables.add(tableId);
+    this.send({ type: 'subscribe', tableId });
+  }
+
+  unsubscribeFromTable(tableId: string): void {
+    this.subscribedTables.delete(tableId);
+    this.send({ type: 'unsubscribe', tableId });
+  }
+
+  private resubscribeAll(): void {
+    for (const tableId of this.subscribedTables) {
+      this.send({ type: 'subscribe', tableId });
+    }
+  }
+
+  private send(payload: unknown): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(payload));
+    }
+  }
+
   onTableCreated(callback: EventCallback<{ table: Table }>): () => void {
     return this.subscribe('table:created', callback);
   }
 
-  onTableUpdated(callback: EventCallback<{ table: Table }>): () => void {
+  onTableUpdated(callback: EventCallback<{ tableId: string; status: string }>): () => void {
     return this.subscribe('table:updated', callback);
   }
 
-  /**
-   * Subscribe to message events
-   */
   onNewMessage(callback: EventCallback<{ message: Message; tableId: string }>): () => void {
     return this.subscribe('message:new', callback);
   }
 
-  /**
-   * Subscribe to quote events
-   */
   onQuoteSubmitted(callback: EventCallback<{ quote: Quote; tableId: string }>): () => void {
     return this.subscribe('quote:submitted', callback);
   }
@@ -203,9 +228,6 @@ class WebSocketService {
     return this.subscribe('quote:approved', callback);
   }
 
-  /**
-   * Subscribe to contract events
-   */
   onContractCreated(callback: EventCallback<{ contract: Contract; tableId: string }>): () => void {
     return this.subscribe('contract:created', callback);
   }
@@ -214,9 +236,6 @@ class WebSocketService {
     return this.subscribe('contract:signed', callback);
   }
 
-  /**
-   * Subscribe to escrow events
-   */
   onEscrowDeposited(callback: EventCallback<{ escrow: Escrow; tableId: string }>): () => void {
     return this.subscribe('escrow:deposited', callback);
   }
@@ -225,9 +244,6 @@ class WebSocketService {
     return this.subscribe('escrow:released', callback);
   }
 
-  /**
-   * Subscribe to dispute events
-   */
   onDisputeOpened(callback: EventCallback<{ dispute: unknown; tableId: string }>): () => void {
     return this.subscribe('dispute:opened', callback);
   }
@@ -236,27 +252,10 @@ class WebSocketService {
     return this.subscribe('dispute:resolved', callback);
   }
 
-  /**
-   * Check if connected
-   */
   isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }
-
-  /**
-   * Subscribe to connection status changes
-   */
-  onConnectionChange(callback: (connected: boolean) => void): () => void {
-    const checkConnection = () => callback(this.isConnected());
-    
-    // Check periodically
-    const interval = setInterval(checkConnection, 1000);
-    
-    // Cleanup
-    return () => clearInterval(interval);
-  }
 }
 
-// Export singleton instance
 export const wsService = new WebSocketService();
 export default wsService;
