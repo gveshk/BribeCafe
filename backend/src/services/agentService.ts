@@ -89,6 +89,25 @@ export class AgentService {
     });
   }
 
+  async getTokenVersion(id: string): Promise<number | null> {
+    const agent = await prismaAny.agent.findUnique({
+      where: { id },
+      select: { tokenVersion: true },
+    });
+
+    return agent?.tokenVersion ?? null;
+  }
+
+  async rotateTokenVersion(id: string): Promise<number> {
+    const agent = await prismaAny.agent.update({
+      where: { id },
+      data: { tokenVersion: { increment: 1 } },
+      select: { tokenVersion: true },
+    });
+
+    return agent.tokenVersion;
+  }
+
   private mapToType(agent: any): Agent {
     return {
       id: agent.id,

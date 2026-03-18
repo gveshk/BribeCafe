@@ -1,8 +1,22 @@
 import { ethers } from 'ethers';
 import jwt from '@fastify/jwt';
+import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { agentService } from '../services/agentService';
-import type { AuthPayload } from '../types';
+
+export interface AuthPayload {
+  agentId: string;
+  ownerAddress: string;
+  tokenVersion: number;
+}
+
+export const AUTH_MESSAGE_PREFIX = 'Sign this challenge to authenticate with BribeCafe';
+
+export interface AuthChallengeMessageInput {
+  challengeId: string;
+  nonce: string;
+  walletAddress: string;
+}
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
@@ -17,21 +31,38 @@ declare module 'fastify' {
   }
 }
 
-const AUTH_MESSAGE = 'Sign this message to authenticate with BribeCafe';
+function validateJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  const isDevelopment = process.env.NODE_ENV === 'development';
+
+  if (!secret) {
+    if (!isDevelopment) {
+      throw new Error('JWT_SECRET must be configured when NODE_ENV is not development');
+    }
+
+    return 'dev-only-fallback-secret';
+  }
+
+  return secret;
+}
 
 export async function registerAuth(fastify: FastifyInstance): Promise<void> {
-  // Register JWT plugin
   await fastify.register(jwt, {
-    secret: process.env.JWT_SECRET || 'fallback-secret-change-me',
+    secret: validateJwtSecret(),
     sign: {
-      expiresIn: '7d',
+      expiresIn: '15m',
     },
   });
 
-  // Decorate with verify function
   fastify.decorate('verifyToken', async function (request: any, reply: any) {
     try {
       const decoded = await request.jwtVerify();
+      const agent = await agentService.findById(decoded.agentId);
+
+      if (!agent || (agent.tokenVersion ?? 0) !== decoded.tokenVersion) {
+        return reply.status(401).send({ error: 'Token revoked' });
+      }
+
       request.auth = decoded;
     } catch (err) {
       reply.status(401).send({ error: 'Unauthorized' });
@@ -39,60 +70,57 @@ export async function registerAuth(fastify: FastifyInstance): Promise<void> {
   });
 }
 
-// Generate authentication message for wallet signing
-export function generateAuthMessage(): string {
-  const timestamp = Date.now();
-  return `${AUTH_MESSAGE}\n\nTimestamp: ${timestamp}\nNonce: ${Math.random().toString(36).substring(7)}`;
+export function generateAuthChallengeMessage(
+  input: AuthChallengeMessageInput
+): string {
+  return [
+    AUTH_MESSAGE_PREFIX,
+    `Wallet: ${input.walletAddress.toLowerCase()}`,
+    `Challenge ID: ${input.challengeId}`,
+    `Nonce: ${input.nonce}`,
+  ].join('\n');
 }
 
-// Verify wallet signature and return address
+export function createNonce(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
 export function verifyWalletSignature(
   message: string,
   signature: string
 ): string {
   try {
-    // Parse the message to extract timestamp and nonce
-    const expectedPrefix = AUTH_MESSAGE;
-    if (!message.startsWith(expectedPrefix)) {
-      throw new Error('Invalid message format');
-    }
-
-    // Verify signature
-    const recoveredAddress = ethers.verifyMessage(message, signature);
-    return recoveredAddress;
-  } catch (error) {
+    return ethers.verifyMessage(message, signature);
+  } catch {
     throw new Error('Invalid signature');
   }
 }
 
-// Generate JWT token for authenticated agent
 export async function generateToken(
   fastify: any,
   agentId: string,
-  ownerAddress: string
+  ownerAddress: string,
+  tokenVersion: number
 ): Promise<string> {
   const payload: AuthPayload = {
     agentId,
     ownerAddress,
+    tokenVersion,
   };
+
   return fastify.jwt.sign(payload);
 }
 
-// Optional auth decorator - doesn't fail if no token
 export async function optionalAuth(
   fastify: FastifyInstance,
   request: any,
   reply: any
 ): Promise<void> {
   const authHeader = request.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return;
-  }
+  if (!authHeader?.startsWith('Bearer ')) return;
 
   try {
-    const decoded = await request.server.jwt.verify(
-      authHeader.substring(7)
-    );
+    const decoded = await request.server.jwt.verify(authHeader.substring(7));
     request.auth = decoded;
   } catch {
     // Ignore auth errors for optional auth

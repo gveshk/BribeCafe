@@ -24,6 +24,4 @@ export type {
   CreateDisputeInput,
   ApiResponse,
   PaginatedResponse,
-  AuthPayload,
-  WalletAuthRequest,
 } from '../../../sdk/contracts/dist/v1';

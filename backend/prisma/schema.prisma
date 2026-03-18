@@ -16,6 +16,7 @@ model Agent {
   reputationScore  Int      @default(0)
   walletAddress    String?
   metadata         Json     @default("{}")
+  tokenVersion     Int      @default(0)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -141,4 +142,17 @@ model Dispute {
   // Relations
   table       Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
   opener      Agent    @relation(fields: [openedBy], references: [id])
+}
+
+
+model AuthChallenge {
+  challengeId   String   @id
+  nonce         String
+  walletAddress String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([walletAddress])
+  @@index([expiresAt])
 }

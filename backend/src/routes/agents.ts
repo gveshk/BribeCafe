@@ -1,11 +1,30 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { createAgentSchema, updateAgentSchema, loginSchema } from '../route-contracts';
+import { createAgentSchema, updateAgentSchema } from '../route-contracts';
 import { agentService } from '../services/agentService';
-import { generateToken, generateAuthMessage, verifyWalletSignature } from '../utils/auth';
+import { authChallengeService } from '../services/authChallengeService';
+import {
+  generateToken,
+  generateAuthChallengeMessage,
+  verifyWalletSignature,
+} from '../utils/auth';
 import type { CreateAgentInput } from '../types';
 
-// Validation schemas
+const loginSchema = z.object({
+  address: z.string().min(1),
+  signature: z.string().min(1),
+  challengeId: z.string().min(1),
+  nonce: z.string().min(1),
+});
+
+const challengeSchema = z.object({
+  address: z.string().min(1),
+});
+
+const refreshSchema = z.object({
+  refreshToken: z.string().min(1),
+});
+
 const listAgentsSchema = z.object({
   capabilities: z.string().optional(),
   minReputation: z.coerce.number().optional(),
@@ -14,7 +33,6 @@ const listAgentsSchema = z.object({
 });
 
 export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
-  // GET /api/agents - List agents
   fastify.get('/', {
     schema: { querystring: listAgentsSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -27,98 +45,125 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
       offset: typeof offset === 'number' ? offset : undefined,
     });
 
-    return reply.send({
-      items: result.agents,
-      total: result.total,
-      limit: limit ?? 50,
-      offset: offset ?? 0,
-    });
+    return reply.send({ items: result.agents, total: result.total, limit: limit ?? 50, offset: offset ?? 0 });
   });
 
-  // POST /api/agents/register - Register new agent
   fastify.post('/register', {
     schema: { body: createAgentSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const input = request.body as z.infer<typeof createAgentSchema>;
 
-    // Check if agent with this owner already exists
     const existing = await agentService.findByOwnerAddress(input.ownerAddress);
     if (existing) {
-      return reply.status(400).send({
-        error: 'Agent already exists for this wallet address',
-      });
+      return reply.status(400).send({ error: 'Agent already exists for this wallet address' });
     }
 
     const agent = await agentService.create(input as CreateAgentInput);
-    const token = await generateToken(fastify, agent.id, agent.ownerAddress);
+    const token = await generateToken(fastify, agent.id, agent.ownerAddress, 0);
+    const refreshToken = (fastify.jwt as any).sign(
+      { agentId: agent.id, ownerAddress: agent.ownerAddress, tokenVersion: 0, type: 'refresh' },
+      { expiresIn: '7d' }
+    );
 
-    return reply.status(201).send({
-      agent,
-      token,
+    return reply.status(201).send({ agent, token, refreshToken });
+  });
+
+  fastify.post('/auth-challenge', {
+    schema: { body: challengeSchema },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { address } = request.body as z.infer<typeof challengeSchema>;
+    const challenge = await authChallengeService.create(address);
+    return reply.send({
+      challengeId: challenge.challengeId,
+      nonce: challenge.nonce,
+      expiresAt: challenge.expiresAt,
+      message: generateAuthChallengeMessage({
+        challengeId: challenge.challengeId,
+        nonce: challenge.nonce,
+        walletAddress: challenge.walletAddress,
+      }),
     });
   });
 
-  // POST /api/agents/login - Wallet-based login
   fastify.post('/login', {
     schema: { body: loginSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const { address, signature, message } = request.body as z.infer<typeof loginSchema>;
+    const { address, signature, challengeId, nonce } = request.body as z.infer<typeof loginSchema>;
+    const normalizedAddress = address.toLowerCase();
 
-    // Verify signature
+    try {
+      await authChallengeService.consume({ challengeId, nonce, walletAddress: normalizedAddress });
+    } catch (error) {
+      return reply.status(401).send({ error: (error as Error).message });
+    }
+
+    const message = generateAuthChallengeMessage({ challengeId, nonce, walletAddress: normalizedAddress });
     const recoveredAddress = verifyWalletSignature(message, signature);
 
-    if (recoveredAddress.toLowerCase() !== address.toLowerCase()) {
-      return reply.status(401).send({
-        error: 'Invalid signature',
-      });
+    if (recoveredAddress.toLowerCase() !== normalizedAddress) {
+      return reply.status(401).send({ error: 'Invalid signature' });
     }
 
-    // Find or create agent
-    let agent = await agentService.findByOwnerAddress(address);
+    let agent = await agentService.findByOwnerAddress(normalizedAddress);
 
     if (!agent) {
-      // Auto-register if doesn't exist
       agent = await agentService.create({
-        ownerAddress: address,
+        ownerAddress: normalizedAddress,
         publicKey: '',
         capabilities: [],
-        walletAddress: address,
-        metadata: {
-          name: `Agent ${address.substring(0, 8)}`,
-          description: '',
-        },
+        walletAddress: normalizedAddress,
+        metadata: { name: `Agent ${normalizedAddress.substring(0, 8)}`, description: '' },
       });
     }
 
-    const token = await generateToken(fastify, agent.id, agent.ownerAddress);
+    const tokenVersion = (await agentService.getTokenVersion(agent.id)) ?? 0;
+    const token = await generateToken(fastify, agent.id, agent.ownerAddress, tokenVersion);
+    const refreshToken = (fastify.jwt as any).sign(
+      { agentId: agent.id, ownerAddress: agent.ownerAddress, tokenVersion, type: 'refresh' },
+      { expiresIn: '7d' }
+    );
 
-    return reply.send({
-      agent,
-      token,
-    });
+    return reply.send({ agent, token, refreshToken });
   });
 
-  // GET /api/agents/auth-message - Get message for wallet signing
-  fastify.get('/auth-message', async (request: FastifyRequest, reply: FastifyReply) => {
-    const message = generateAuthMessage();
-    return reply.send({ message });
+  fastify.post('/refresh', {
+    schema: { body: refreshSchema },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { refreshToken } = request.body as z.infer<typeof refreshSchema>;
+
+    try {
+      const decoded = await fastify.jwt.verify<any>(refreshToken);
+      if (decoded.type !== 'refresh') return reply.status(401).send({ error: 'Invalid refresh token' });
+
+      const currentTokenVersion = await agentService.getTokenVersion(decoded.agentId);
+      if (currentTokenVersion === null || currentTokenVersion !== decoded.tokenVersion) {
+        return reply.status(401).send({ error: 'Refresh token revoked' });
+      }
+
+      const token = await generateToken(fastify, decoded.agentId, decoded.ownerAddress, currentTokenVersion);
+      return reply.send({ token });
+    } catch {
+      return reply.status(401).send({ error: 'Invalid refresh token' });
+    }
   });
 
-  // GET /api/agents/:id - Get agent by ID
+  fastify.post('/logout', {
+    preHandler: [fastify.verifyToken],
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    await agentService.rotateTokenVersion(request.auth.agentId);
+    return reply.send({ success: true });
+  });
+
   fastify.get('/:id', {
     preHandler: [fastify.verifyToken],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const agent = await agentService.findById(id);
 
-    if (!agent) {
-      return reply.status(404).send({ error: 'Agent not found' });
-    }
-
+    if (!agent) return reply.status(404).send({ error: 'Agent not found' });
     return reply.send({ agent });
   });
 
-  // PUT /api/agents/:id - Update agent
   fastify.put('/:id', {
     preHandler: [fastify.verifyToken],
     schema: { body: updateAgentSchema },
@@ -126,10 +171,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const body = request.body as z.infer<typeof updateAgentSchema>;
 
-    // Verify ownership
-    if (request.auth.agentId !== id) {
-      return reply.status(403).send({ error: 'Not authorized' });
-    }
+    if (request.auth.agentId !== id) return reply.status(403).send({ error: 'Not authorized' });
 
     const updateData: Partial<CreateAgentInput> = {};
     if (body.publicKey) updateData.publicKey = body.publicKey;
@@ -138,23 +180,16 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
     if (body.metadata) updateData.metadata = body.metadata as CreateAgentInput['metadata'];
 
     const agent = await agentService.update(id, updateData);
-
-    if (!agent) {
-      return reply.status(404).send({ error: 'Agent not found' });
-    }
+    if (!agent) return reply.status(404).send({ error: 'Agent not found' });
 
     return reply.send({ agent });
   });
 
-  // GET /api/agents/me - Get current authenticated agent
   fastify.get('/me', {
     preHandler: [fastify.verifyToken],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const agent = await agentService.findById(request.auth.agentId);
-
-    if (!agent) {
-      return reply.status(404).send({ error: 'Agent not found' });
-    }
+    if (!agent) return reply.status(404).send({ error: 'Agent not found' });
 
     return reply.send({ agent });
   });
