@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Agent, Table, Message, Quote, Contract, Escrow } from '../types';
-import api, { ApiService } from '../services/api';
+import api from '../services/api';
 import wsService from '../services/websocket';
 import walletService from '../services/wallet';
 
@@ -36,8 +36,8 @@ interface AppContextType {
   submitQuote: (amount: number, description: string) => Promise<void>;
   approveQuote: () => Promise<void>;
   createContract: (amount: number, deliverables: string[], timeline: { start: number; end: number }) => Promise<void>;
-  signContract: (amount: number) => Promise<void>;
-  depositEscrow: (amount: number) => Promise<void>;
+  signContract: (amount: string) => Promise<void>;
+  depositEscrow: (amount: string) => Promise<void>;
   approveRelease: () => Promise<void>;
   openDispute: (reason: 'quality' | 'non_delivery' | 'other', evidence?: string[]) => Promise<void>;
   error: string | null;
@@ -48,8 +48,6 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // Demo mode - uses mock data when no backend
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE !== 'false';
-const API_URL = import.meta.env.VITE_API_URL;
-
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -143,7 +141,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // Use mock data
         const mockAgent: Agent = {
           id: address,
-          owner: address,
+          ownerAddress: address,
           publicKey: '',
           capabilities: ['defi-research'],
           reputationScore: 85,
@@ -183,7 +181,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           [address]: mockAgent,
           'agent-002': {
             id: 'agent-002',
-            owner: '0x9B3a54D092fF1F4c3a9bC7fE1d2C8F3a1E5b7D9C',
+            ownerAddress: '0x9B3a54D092fF1F4c3a9bC7fE1d2C8F3a1E5b7D9C',
             publicKey: '',
             capabilities: ['smart-contract-audit'],
             reputationScore: 85,
@@ -194,7 +192,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           },
           'agent-003': {
             id: 'agent-003',
-            owner: '0x1234567890abcdef1234567890abcdef12345678',
+            ownerAddress: '0x1234567890abcdef1234567890abcdef12345678',
             publicKey: '',
             capabilities: ['nft-minting'],
             reputationScore: 78,
@@ -248,22 +246,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             { id: '2', tableId: table.id, senderId: table.participantId, content: 'Sure! What do you need?', messageType: 'text', createdAt: Date.now() - 86400000 * 2 + 3600000 },
           ];
           setMessages(mockMessages);
-          setQuote({ id: 'q1', tableId: table.id, submitterId: table.participantId, amount: 5000, description: 'Full project delivery', approvedBy: [], createdAt: Date.now(), updatedAt: Date.now() });
+          setQuote({ id: 'q1', tableId: table.id, sellerId: table.participantId, encryptedAmount: '5000', description: 'Full project delivery', approvedBy: [], createdAt: Date.now(), updatedAt: Date.now() });
           setContract(null);
-          setEscrow({ tableId: table.id, amount: 5100, fee: 100, buyerAddress: table.creatorId, sellerAddress: table.participantId, status: 'deposited', buyerApproved: false, sellerApproved: false });
+          setEscrow({ tableId: table.id, amount: '5100', fee: '100', buyerAddress: table.creatorId, sellerAddress: table.participantId, status: 'deposited', buyerApproved: false, sellerApproved: false });
         } else {
-          const [tableData, msgs, q, c, e] = await Promise.all([
+          const [tableData, escrowStatus] = await Promise.all([
             api.getTable(table.id),
-            api.getMessages(table.id),
-            api.getQuote(table.id),
-            api.getContract(table.id),
             api.getEscrow(table.id).catch(() => null),
           ]);
-          
+
           setMessages(tableData.messages);
-          setQuote(q);
-          setContract(c);
-          setEscrow(e);
+          setQuote(tableData.quotes[0] ?? null);
+          setContract(tableData.contract);
+          setEscrow(escrowStatus);
         }
       } catch (err) {
         console.error('Failed to load table:', err);
@@ -285,19 +280,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (DEMO_MODE) {
         // Already loaded
       } else {
-        const [tableData, msgs, q, c, e] = await Promise.all([
+        const [tableData, escrowStatus] = await Promise.all([
           api.getTable(tableId),
-          api.getMessages(tableId),
-          api.getQuote(tableId),
-          api.getContract(tableId),
           api.getEscrow(tableId).catch(() => null),
         ]);
-        
+
         setSelectedTable(tableData.table);
-        setMessages(msgs.items);
-        setQuote(q);
-        setContract(c);
-        setEscrow(e);
+        setMessages(tableData.messages);
+        setQuote(tableData.quotes[0] ?? null);
+        setContract(tableData.contract);
+        setEscrow(escrowStatus);
       }
     } catch (err) {
       console.error('Failed to refresh table:', err);
@@ -352,8 +344,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const newQuote: Quote = {
           id: `quote-${Date.now()}`,
           tableId: selectedTable.id,
-          submitterId: currentAgent?.id || '',
-          amount,
+          sellerId: currentAgent?.id || '',
+          encryptedAmount: amount.toString(),
           description,
           approvedBy: [],
           createdAt: Date.now(),
@@ -361,7 +353,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         };
         setQuote(newQuote);
       } else {
-        await api.submitQuote(selectedTable.id, amount, description);
+        await api.submitQuote(selectedTable.id, amount.toString(), description);
         await refreshTable(selectedTable.id);
       }
     } catch (err) {
@@ -376,7 +368,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     
     try {
       if (DEMO_MODE) {
-        setQuote((prev) => prev ? { ...prev, approvedBy: [...prev.approvedBy, currentAgent?.id || ''] } : null);
+        setQuote((prev) => {
+          if (!prev) return null;
+          const currentApprovedBy = Array.isArray(prev.approvedBy)
+            ? prev.approvedBy
+            : prev.approvedBy
+              ? [prev.approvedBy]
+              : [];
+          return { ...prev, approvedBy: [...currentApprovedBy, currentAgent?.id || ''] };
+        });
       } else {
         await api.approveQuote(selectedTable.id);
         await refreshTable(selectedTable.id);
@@ -396,7 +396,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const newContract: Contract = {
           id: `contract-${Date.now()}`,
           tableId: selectedTable.id,
-          amount,
+          encryptedAmount: amount.toString(),
           deliverables: deliverables.map((d, i) => ({ id: `d-${i}`, description: d, completed: false })),
           timeline,
           buyerSigned: false,
@@ -406,7 +406,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         };
         setContract(newContract);
       } else {
-        await api.createContract(selectedTable.id, amount, deliverables, timeline);
+        await api.createContract(selectedTable.id, amount.toString(), deliverables, timeline);
         await refreshTable(selectedTable.id);
       }
     } catch (err) {
@@ -416,7 +416,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [selectedTable, refreshTable]);
 
   // Sign contract
-  const signContract = useCallback(async (amount: number) => {
+  const signContract = useCallback(async (amount: string) => {
     if (!selectedTable) return;
     
     try {
@@ -438,7 +438,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [selectedTable, currentAgent, refreshTable]);
 
   // Deposit escrow
-  const depositEscrow = useCallback(async (amount: number) => {
+  const depositEscrow = useCallback(async (amount: string) => {
     if (!selectedTable) return;
     
     try {
@@ -446,7 +446,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setEscrow({
           tableId: selectedTable.id,
           amount,
-          fee: Math.round(amount * 0.02),
+          fee: Math.round(Number(amount) * 0.02).toString(),
           buyerAddress: currentAgent?.walletAddress || '',
           sellerAddress: agents[selectedTable.participantId]?.walletAddress || '',
           status: 'deposited',

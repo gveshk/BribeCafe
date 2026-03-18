@@ -1,7 +1,18 @@
-// Real API Service - connects to BribeCafe backend
-import { Agent, Table, Message, Quote, Contract, Escrow, Dispute, PaginatedResponse } from '../types';
+import {
+  Agent,
+  Contract,
+  Dispute,
+  Escrow,
+  Message,
+  PaginatedResponse,
+  Quote,
+  Table,
+} from '../types';
+import type { ApiEndpoints, EndpointKey } from './generatedClient';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
+type PathParams = { id?: string };
 
 interface AuthState {
   agentId: string | null;
@@ -9,16 +20,15 @@ interface AuthState {
   token: string | null;
 }
 
-class ApiService {
+export class ApiService {
   private auth: AuthState = {
     agentId: null,
     walletAddress: null,
     token: null,
   };
 
-  // Auth methods
   setAuth(agentId: string, walletAddress: string, token?: string): void {
-    this.auth = { agentId, walletAddress, token };
+    this.auth = { agentId, walletAddress, token: token ?? null };
   }
 
   clearAuth(): void {
@@ -29,32 +39,41 @@ class ApiService {
     return { ...this.auth };
   }
 
-  isAuthenticated(): boolean {
-    return !!this.auth.token && !!this.auth.agentId;
-  }
-
-  // Private request handler
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const { agentId, walletAddress, token } = this.auth;
-
-    if (!agentId || !walletAddress) {
-      throw new Error('Not authenticated');
+  private buildUrl(endpoint: string, pathParams?: PathParams, query?: Record<string, string | number | undefined>): string {
+    let path = endpoint;
+    if (pathParams?.id) {
+      path = path.replace(':id', pathParams.id);
     }
 
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      'X-Agent-ID': agentId,
-      'X-Wallet-Address': walletAddress,
-      ...(token && { 'Authorization': `Bearer ${token}` }),
-      ...options.headers,
-    };
+    const params = new URLSearchParams();
+    Object.entries(query ?? {}).forEach(([key, value]) => {
+      if (value !== undefined) params.append(key, String(value));
+    });
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers,
+    return `${API_BASE_URL}${path}${params.size > 0 ? `?${params.toString()}` : ''}`;
+  }
+
+  private async call<K extends EndpointKey>(
+    endpoint: K,
+    options: {
+      method: string;
+      pathParams?: PathParams;
+      query?: ApiEndpoints[K] extends { query?: infer Q } ? Q : never;
+      body?: ApiEndpoints[K] extends { body: infer B } ? B : never;
+    }
+  ): Promise<ApiEndpoints[K]['response']> {
+    const { agentId, walletAddress, token } = this.auth;
+    if (!agentId || !walletAddress) throw new Error('Not authenticated');
+
+    const response = await fetch(this.buildUrl(endpoint.split(' ')[1], options.pathParams, options.query as Record<string, string | number | undefined>), {
+      method: options.method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Agent-ID': agentId,
+        'X-Wallet-Address': walletAddress,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
     });
 
     if (!response.ok) {
@@ -62,169 +81,77 @@ class ApiService {
       throw new Error(error.error || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    return response.json() as Promise<ApiEndpoints[K]['response']>;
   }
 
-  // Agent endpoints
   async getCurrentAgent(): Promise<Agent> {
-    const data = await this.request<{ agent: Agent }>(`/api/agents/${this.auth.agentId}`);
+    const data = await this.call('GET /api/agents/:id', { method: 'GET', pathParams: { id: this.auth.agentId ?? '' } });
     return data.agent;
   }
 
   async getAgent(id: string): Promise<Agent> {
-    const data = await this.request<{ agent: Agent }>(`/api/agents/${id}`);
+    const data = await this.call('GET /api/agents/:id', { method: 'GET', pathParams: { id } });
     return data.agent;
   }
 
-  async listAgents(filters?: { capability?: string; minReputation?: number; limit?: number }): Promise<PaginatedResponse<Agent>> {
-    const params = new URLSearchParams();
-    if (filters?.capability) params.append('capability', filters.capability);
-    if (filters?.minReputation) params.append('minReputation', filters.minReputation.toString());
-    if (filters?.limit) params.append('limit', filters.limit.toString());
-
-    const query = params.toString();
-    return this.request<PaginatedResponse<Agent>>(`/api/agents${query ? `?${query}` : ''}`);
+  async listAgents(filters?: { capability?: string; minReputation?: number; limit?: number; offset?: number }): Promise<PaginatedResponse<Agent>> {
+    return this.call('GET /api/agents', { method: 'GET', query: filters });
   }
 
-  // Table endpoints
   async createTable(participantId: string, encryptedBudget?: string): Promise<{ table: Table }> {
-    return this.request<{ table: Table }>('/api/tables', {
-      method: 'POST',
-      body: JSON.stringify({ participantId, encryptedBudget }),
-    });
+    return this.call('POST /api/tables', { method: 'POST', body: { participantId, encryptedBudget } });
   }
 
-  async getTable(id: string): Promise<{
-    table: Table;
-    messages: Message[];
-    quotes: Quote[];
-    contract: Contract | null;
-  }> {
-    return this.request<{
-      table: Table;
-      messages: Message[];
-      quotes: Quote[];
-      contract: Contract | null;
-    }>(`/api/tables/${id}`);
+  async getTable(id: string): Promise<{ table: Table; messages: Message[]; quotes: Quote[]; contract: Contract | null }> {
+    return this.call('GET /api/tables/:id', { method: 'GET', pathParams: { id } });
   }
 
   async listTables(filters?: { status?: string; limit?: number; offset?: number }): Promise<PaginatedResponse<Table>> {
-    const params = new URLSearchParams();
-    if (filters?.status) params.append('status', filters.status);
-    if (filters?.limit) params.append('limit', filters.limit.toString());
-    if (filters?.offset) params.append('offset', filters.offset.toString());
-
-    return this.request<PaginatedResponse<Table>>(`/api/tables?${params.toString()}`);
+    return this.call('GET /api/tables', { method: 'GET', query: filters });
   }
 
-  // Message endpoints
   async sendMessage(tableId: string, content: string, messageType: 'text' | 'quote' | 'document' = 'text'): Promise<{ message: Message }> {
-    return this.request<{ message: Message }>(`/api/tables/${tableId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ content, messageType }),
-    });
+    return this.call('POST /api/tables/:id/messages', { method: 'POST', pathParams: { id: tableId }, body: { content, messageType } });
   }
 
   async getMessages(tableId: string, limit?: number, offset?: number): Promise<PaginatedResponse<Message>> {
-    const params = new URLSearchParams();
-    if (limit) params.append('limit', limit.toString());
-    if (offset) params.append('offset', offset.toString());
-
-    const query = params.toString();
-    return this.request<PaginatedResponse<Message>>(`/api/tables/${tableId}/messages${query ? `?${query}` : ''}`);
+    return this.call('GET /api/tables/:id/messages', { method: 'GET', pathParams: { id: tableId }, query: { limit, offset } });
   }
 
-  // Quote endpoints
-  async submitQuote(tableId: string, amount: number, description: string): Promise<{ quote: Quote }> {
-    // In production, encrypt this with FHE
-    const encryptedAmount = amount.toString();
-    return this.request<{ quote: Quote }>(`/api/tables/${tableId}/quote`, {
-      method: 'POST',
-      body: JSON.stringify({ encryptedAmount, description }),
-    });
-  }
-
-  async getQuote(tableId: string): Promise<Quote | null> {
-    const data = await this.request<{ quote: Quote | null }>(`/api/tables/${tableId}/quote`);
-    return data.quote;
+  async submitQuote(tableId: string, encryptedAmount: string, description: string): Promise<{ quote: Quote }> {
+    return this.call('POST /api/tables/:id/quote', { method: 'POST', pathParams: { id: tableId }, body: { encryptedAmount, description } });
   }
 
   async approveQuote(tableId: string): Promise<{ quote: Quote }> {
-    return this.request<{ quote: Quote }>(`/api/tables/${tableId}/quote/approve`, {
-      method: 'POST',
-    });
+    return this.call('POST /api/tables/:id/quote/approve', { method: 'POST', pathParams: { id: tableId } });
   }
 
-  // Contract endpoints
-  async createContract(
-    tableId: string,
-    amount: number,
-    deliverables: string[],
-    timeline: { start: number; end: number }
-  ): Promise<{ contract: Contract }> {
-    const encryptedAmount = amount.toString();
-    return this.request<{ contract: Contract }>(`/api/tables/${tableId}/contract`, {
-      method: 'POST',
-      body: JSON.stringify({ encryptedAmount, deliverables, timeline }),
-    });
+  async createContract(tableId: string, encryptedAmount: string, deliverables: string[], timeline: { start: number; end: number }): Promise<{ contract: Contract }> {
+    return this.call('POST /api/tables/:id/contract', { method: 'POST', pathParams: { id: tableId }, body: { encryptedAmount, deliverables, timeline } });
   }
 
-  async getContract(tableId: string): Promise<Contract | null> {
-    const data = await this.request<{ contract: Contract | null }>(`/api/tables/${tableId}/contract`);
-    return data.contract;
+  async signContract(tableId: string, amount: string): Promise<{ contract: Contract | null; bothSigned: boolean }> {
+    return this.call('POST /api/tables/:id/contract/sign', { method: 'POST', pathParams: { id: tableId }, body: { amount } });
   }
 
-  async signContract(tableId: string, amount: number): Promise<{ contract: Contract; bothSigned: boolean }> {
-    return this.request<{ contract: Contract; bothSigned: boolean }>(`/api/tables/${tableId}/contract/sign`, {
-      method: 'POST',
-      body: JSON.stringify({ amount: amount.toString() }),
-    });
-  }
-
-  // Escrow endpoints
-  async depositEscrow(tableId: string, amount: number): Promise<{ success: boolean; tableId: string; amount: string }> {
-    return this.request<{ success: boolean; tableId: string; amount: string }>(`/api/tables/${tableId}/escrow/deposit`, {
-      method: 'POST',
-      body: JSON.stringify({ amount: amount.toString() }),
-    });
+  async depositEscrow(tableId: string, amount: string): Promise<{ success: boolean; tableId: string; amount: string; message: string }> {
+    return this.call('POST /api/tables/:id/escrow/deposit', { method: 'POST', pathParams: { id: tableId }, body: { amount } });
   }
 
   async getEscrow(tableId: string): Promise<Escrow> {
-    return this.request<Escrow>(`/api/tables/${tableId}/escrow/status`);
+    return this.call('GET /api/tables/:id/escrow/status', { method: 'GET', pathParams: { id: tableId } });
   }
 
-  async approveRelease(tableId: string): Promise<{ success: boolean; approvedBy: 'buyer' | 'seller' }> {
-    return this.request<{ success: boolean; approvedBy: 'buyer' | 'seller' }>(`/api/tables/${tableId}/escrow/release/approve`, {
-      method: 'POST',
-    });
+  async approveRelease(tableId: string): Promise<{ success: boolean; approvedBy: 'buyer' | 'seller'; message: string }> {
+    return this.call('POST /api/tables/:id/escrow/release/approve', { method: 'POST', pathParams: { id: tableId } });
   }
 
-  async cancelEscrow(tableId: string): Promise<{ success: boolean }> {
-    return this.request<{ success: boolean }>(`/api/tables/${tableId}/escrow/cancel`, {
-      method: 'POST',
-    });
-  }
-
-  // Dispute endpoints
   async openDispute(tableId: string, reason: 'quality' | 'non_delivery' | 'other', evidence: string[] = []): Promise<{ dispute: Dispute }> {
-    return this.request<{ dispute: Dispute }>(`/api/tables/${tableId}/dispute`, {
-      method: 'POST',
-      body: JSON.stringify({ reason, evidence }),
-    });
+    return this.call('POST /api/tables/:id/dispute', { method: 'POST', pathParams: { id: tableId }, body: { reason, evidence } });
   }
 
-  async getDispute(tableId: string): Promise<Dispute | null> {
-    const data = await this.request<{ dispute: Dispute | null }>(`/api/tables/${tableId}/dispute`);
-    return data.dispute;
-  }
-
-  // Get current IDs
   getCurrentAgentId(): string | null {
     return this.auth.agentId;
-  }
-
-  getCurrentWallet(): string | null {
-    return this.auth.walletAddress;
   }
 }
 
