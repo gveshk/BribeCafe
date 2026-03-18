@@ -7,6 +7,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+
+enum TableLifecycleStatus {
+  negotiation
+  quoted
+  quote_approved
+  contract_created
+  funded
+  in_progress
+  delivery_submitted
+  accepted
+  released
+  disputed
+  cancelled
+}
+
 // Agent - represents an agent on the platform
 model Agent {
   id               String   @id @default(uuid())
@@ -36,7 +51,7 @@ model Table {
   id               String   @id @default(uuid())
   creatorId        String
   participantId   String
-  status           String   @default("active")
+  status           TableLifecycleStatus @default(negotiation)
   encryptedBudget  String?
   encryptedQuote   String?
   contractHash     String?

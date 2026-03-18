@@ -66,19 +66,19 @@ export declare const AgentSchema: z.ZodObject<{
     updatedAt: number | Date;
     owner?: string | undefined;
 }>;
-export declare const TableStatusSchema: z.ZodEnum<["active", "completed", "cancelled", "disputed"]>;
+export declare const TableStatusSchema: z.ZodEnum<["negotiation", "quoted", "quote_approved", "contract_created", "funded", "in_progress", "delivery_submitted", "accepted", "released", "disputed", "cancelled"]>;
 export declare const TableSchema: z.ZodObject<{
     id: z.ZodString;
     creatorId: z.ZodString;
     participantId: z.ZodString;
-    status: z.ZodEnum<["active", "completed", "cancelled", "disputed"]>;
+    status: z.ZodEnum<["negotiation", "quoted", "quote_approved", "contract_created", "funded", "in_progress", "delivery_submitted", "accepted", "released", "disputed", "cancelled"]>;
     encryptedBudget: z.ZodOptional<z.ZodString>;
     encryptedQuote: z.ZodOptional<z.ZodString>;
     contractHash: z.ZodOptional<z.ZodString>;
     createdAt: z.ZodUnion<[z.ZodDate, z.ZodNumber]>;
     updatedAt: z.ZodUnion<[z.ZodDate, z.ZodNumber]>;
 }, "strip", z.ZodTypeAny, {
-    status: "active" | "completed" | "cancelled" | "disputed";
+    status: "negotiation" | "quoted" | "quote_approved" | "contract_created" | "funded" | "in_progress" | "delivery_submitted" | "accepted" | "released" | "disputed" | "cancelled";
     id: string;
     createdAt: number | Date;
     updatedAt: number | Date;
@@ -88,7 +88,7 @@ export declare const TableSchema: z.ZodObject<{
     encryptedQuote?: string | undefined;
     contractHash?: string | undefined;
 }, {
-    status: "active" | "completed" | "cancelled" | "disputed";
+    status: "negotiation" | "quoted" | "quote_approved" | "contract_created" | "funded" | "in_progress" | "delivery_submitted" | "accepted" | "released" | "disputed" | "cancelled";
     id: string;
     createdAt: number | Date;
     updatedAt: number | Date;
@@ -285,10 +285,10 @@ export declare const EscrowStatusSchema: z.ZodObject<{
     fee: string | number;
     buyerApproved: boolean;
     sellerApproved: boolean;
-    status?: "cancelled" | "disputed" | "pending" | "deposited" | "released" | undefined;
-    cancelled?: boolean | undefined;
-    disputed?: boolean | undefined;
+    status?: "released" | "disputed" | "cancelled" | "pending" | "deposited" | undefined;
     released?: boolean | undefined;
+    disputed?: boolean | undefined;
+    cancelled?: boolean | undefined;
     buyerAddress?: string | undefined;
     sellerAddress?: string | undefined;
     releasedAt?: number | Date | undefined;
@@ -298,10 +298,10 @@ export declare const EscrowStatusSchema: z.ZodObject<{
     fee: string | number;
     buyerApproved: boolean;
     sellerApproved: boolean;
-    status?: "cancelled" | "disputed" | "pending" | "deposited" | "released" | undefined;
-    cancelled?: boolean | undefined;
-    disputed?: boolean | undefined;
+    status?: "released" | "disputed" | "cancelled" | "pending" | "deposited" | undefined;
     released?: boolean | undefined;
+    disputed?: boolean | undefined;
+    cancelled?: boolean | undefined;
     buyerAddress?: string | undefined;
     sellerAddress?: string | undefined;
     releasedAt?: number | Date | undefined;
@@ -321,7 +321,7 @@ export declare const EscrowEventSchema: z.ZodObject<{
     tableId: string;
     amount: string;
     fee: string;
-    eventType: "cancelled" | "disputed" | "deposited" | "released" | "created";
+    eventType: "released" | "disputed" | "cancelled" | "deposited" | "created";
     txHash: string;
 }, {
     id: string;
@@ -329,7 +329,7 @@ export declare const EscrowEventSchema: z.ZodObject<{
     tableId: string;
     amount: string;
     fee: string;
-    eventType: "cancelled" | "disputed" | "deposited" | "released" | "created";
+    eventType: "released" | "disputed" | "cancelled" | "deposited" | "created";
     txHash: string;
 }>;
 export declare const DisputeReasonSchema: z.ZodEnum<["quality", "non_delivery", "other"]>;
@@ -682,14 +682,14 @@ export declare const CreateTableResponseSchema: z.ZodObject<{
         id: z.ZodString;
         creatorId: z.ZodString;
         participantId: z.ZodString;
-        status: z.ZodEnum<["active", "completed", "cancelled", "disputed"]>;
+        status: z.ZodEnum<["negotiation", "quoted", "quote_approved", "contract_created", "funded", "in_progress", "delivery_submitted", "accepted", "released", "disputed", "cancelled"]>;
         encryptedBudget: z.ZodOptional<z.ZodString>;
         encryptedQuote: z.ZodOptional<z.ZodString>;
         contractHash: z.ZodOptional<z.ZodString>;
         createdAt: z.ZodUnion<[z.ZodDate, z.ZodNumber]>;
         updatedAt: z.ZodUnion<[z.ZodDate, z.ZodNumber]>;
     }, "strip", z.ZodTypeAny, {
-        status: "active" | "completed" | "cancelled" | "disputed";
+        status: "negotiation" | "quoted" | "quote_approved" | "contract_created" | "funded" | "in_progress" | "delivery_submitted" | "accepted" | "released" | "disputed" | "cancelled";
         id: string;
         createdAt: number | Date;
         updatedAt: number | Date;
@@ -699,7 +699,7 @@ export declare const CreateTableResponseSchema: z.ZodObject<{
         encryptedQuote?: string | undefined;
         contractHash?: string | undefined;
     }, {
-        status: "active" | "completed" | "cancelled" | "disputed";
+        status: "negotiation" | "quoted" | "quote_approved" | "contract_created" | "funded" | "in_progress" | "delivery_submitted" | "accepted" | "released" | "disputed" | "cancelled";
         id: string;
         createdAt: number | Date;
         updatedAt: number | Date;
@@ -711,7 +711,7 @@ export declare const CreateTableResponseSchema: z.ZodObject<{
     }>;
 }, "strip", z.ZodTypeAny, {
     table: {
-        status: "active" | "completed" | "cancelled" | "disputed";
+        status: "negotiation" | "quoted" | "quote_approved" | "contract_created" | "funded" | "in_progress" | "delivery_submitted" | "accepted" | "released" | "disputed" | "cancelled";
         id: string;
         createdAt: number | Date;
         updatedAt: number | Date;
@@ -723,7 +723,7 @@ export declare const CreateTableResponseSchema: z.ZodObject<{
     };
 }, {
     table: {
-        status: "active" | "completed" | "cancelled" | "disputed";
+        status: "negotiation" | "quoted" | "quote_approved" | "contract_created" | "funded" | "in_progress" | "delivery_submitted" | "accepted" | "released" | "disputed" | "cancelled";
         id: string;
         createdAt: number | Date;
         updatedAt: number | Date;
