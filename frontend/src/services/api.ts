@@ -3,6 +3,35 @@ import { Agent, Table, Message, Quote, Contract, Escrow, Dispute, PaginatedRespo
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
+export interface ApiError {
+  message: string;
+  status?: number;
+  code?: string;
+  details?: unknown;
+}
+
+export const normalizeApiError = (error: unknown): ApiError => {
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+
+  if (typeof error === 'string') {
+    return { message: error };
+  }
+
+  if (error && typeof error === 'object') {
+    const maybeError = error as { message?: string; error?: string; status?: number; code?: string; details?: unknown };
+    return {
+      message: maybeError.message || maybeError.error || 'Something went wrong. Please try again.',
+      status: maybeError.status,
+      code: maybeError.code,
+      details: maybeError.details,
+    };
+  }
+
+  return { message: 'Something went wrong. Please try again.' };
+};
+
 interface AuthState {
   agentId: string | null;
   walletAddress: string | null;
@@ -58,8 +87,12 @@ class ApiService {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || `HTTP ${response.status}`);
+      const payload = await response.json().catch(() => ({ error: 'Request failed' }));
+      throw normalizeApiError({
+        ...payload,
+        status: response.status,
+        message: payload.error || payload.message || `HTTP ${response.status}` ,
+      });
     }
 
     return response.json();
