@@ -5,6 +5,9 @@ import { registerAuth } from './utils/auth';
 import { agentRoutes } from './routes/agents';
 import { tableRoutes } from './routes/tables';
 import { escrowService } from './services/escrowService';
+import { registerWebsocketGateway } from './services/websocketGateway';
+import { eventBroker } from './services/eventBroker';
+import { tableService } from './services/tableService';
 
 dotenv.config();
 
@@ -22,6 +25,9 @@ export async function startApp(): Promise<void> {
     // Register authentication
     await registerAuth(app);
 
+    // Register websocket gateway
+    registerWebsocketGateway(app);
+
     // Health check
     app.get('/health', async () => {
       return { status: 'ok', timestamp: new Date().toISOString() };
@@ -30,6 +36,23 @@ export async function startApp(): Promise<void> {
     // Register routes
     await app.register(agentRoutes, { prefix: '/api/agents' });
     await app.register(tableRoutes, { prefix: '/api/tables' });
+
+    // Event delta endpoint for reconnect re-sync
+    app.get('/api/events/since/:seq', {
+      preHandler: [app.verifyToken],
+    }, async (request, reply) => {
+      const { seq } = request.params as { seq: string };
+      const sinceSeq = Number(seq) || 0;
+      const tables = await tableService.findByAgent(request.auth.agentId, { limit: 1000, offset: 0 });
+      const tableIds = new Set(tables.tables.map((table) => table.id));
+      const events = eventBroker.getEventsSince(sinceSeq, tableIds);
+
+      return reply.send({
+        fromSeq: sinceSeq,
+        toSeq: eventBroker.getCurrentSeq(),
+        events,
+      });
+    });
 
     // Initialize escrow service if config provided
     if (process.env.ZAMA_RPC_URL && process.env.ESCROW_ADDRESS) {
