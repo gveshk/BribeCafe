@@ -12,6 +12,13 @@ import { tableService } from '../services/tableService';
 import { messageService } from '../services/messageService';
 import { quoteService } from '../services/quoteService';
 import { contractService } from '../services/contractService';
+import {
+  approveQuoteUseCase,
+  createContractUseCase,
+  signContractUseCase,
+  openDisputeUseCase,
+  depositEscrowUseCase,
+} from '../usecases';
 import type { CreateTableInput } from '../types';
 
 // Validation schemas
@@ -22,6 +29,26 @@ const listTablesSchema = z.object({
 });
 
 export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
+  const errorStatusCode: Record<string, number> = {
+    TABLE_NOT_FOUND: 404,
+    QUOTE_NOT_FOUND: 404,
+    CONTRACT_NOT_FOUND: 404,
+    FORBIDDEN: 403,
+    INVALID_STATE: 400,
+  };
+
+  const replyWithUseCaseResult = <T>(
+    reply: FastifyReply,
+    result: { success: boolean; errorCode?: string; message: string; data?: T },
+    successStatusCode = 200,
+  ) => {
+    if (!result.success) {
+      return reply.status(errorStatusCode[result.errorCode ?? ''] ?? 400).send(result);
+    }
+
+    return reply.status(successStatusCode).send(result);
+  };
+
   // Middleware to check table participation
   const requireParticipant = async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
@@ -197,37 +224,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
 
-    const table = await tableService.findById(id);
-    if (!table) {
-      return reply.status(404).send({ error: 'Table not found' });
-    }
-
-    // Only creator (buyer) can approve
-    if (table.creatorId !== request.auth.agentId) {
-      return reply.status(403).send({
-        error: 'Only the table creator can approve a quote',
-      });
-    }
-
-    const latestQuote = await quoteService.findLatestByTable(id);
-    if (!latestQuote) {
-      return reply.status(404).send({ error: 'No quote found' });
-    }
-
-    const approvedQuote = await quoteService.approve(latestQuote.id, request.auth.agentId);
-
-    // Update table with quote
-    await tableService.updateQuote(id, latestQuote.encryptedAmount);
-
-    // Send system message
-    await messageService.create({
+    const result = await approveQuoteUseCase({
       tableId: id,
-      senderId: request.auth.agentId,
-      content: 'Quote approved',
-      messageType: 'system',
+      approverId: request.auth.agentId,
     });
 
-    return reply.send({ quote: approvedQuote });
+    return replyWithUseCaseResult(reply, result);
   });
 
   // POST /api/tables/:id/contract - Create contract
@@ -239,21 +241,8 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     const body = request.body as z.infer<typeof createContractSchema>;
     const { encryptedAmount, deliverables, timeline } = body;
 
-    const table = await tableService.findById(id);
-    if (!table) {
-      return reply.status(404).send({ error: 'Table not found' });
-    }
-
-    // Verify quote is approved
-    const latestQuote = await quoteService.findLatestByTable(id);
-    if (!latestQuote?.approved) {
-      return reply.status(400).send({ error: 'Quote must be approved first' });
-    }
-
-    const contract = await contractService.create({
+    const result = await createContractUseCase({
       tableId: id,
-      buyerId: table.creatorId,
-      sellerId: table.participantId,
       encryptedAmount,
       deliverables,
       timeline: {
@@ -262,18 +251,7 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       },
     });
 
-    // Update table with contract hash
-    await tableService.updateContractHash(id, contract.id);
-
-    // Send system message
-    await messageService.create({
-      tableId: id,
-      senderId: table.participantId,
-      content: 'Contract created',
-      messageType: 'contract',
-    });
-
-    return reply.status(201).send({ contract });
+    return replyWithUseCaseResult(reply, result, 201);
   });
 
   // POST /api/tables/:id/contract/sign - Sign contract & deposit escrow
@@ -282,54 +260,13 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     schema: { body: escrowDepositSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
-    const body = request.body as z.infer<typeof escrowDepositSchema>;
-    const { amount } = body;
 
-    const table = await tableService.findById(id);
-    if (!table) {
-      return reply.status(404).send({ error: 'Table not found' });
-    }
-
-    const contract = await contractService.findByTable(id);
-    if (!contract) {
-      return reply.status(404).send({ error: 'Contract not found' });
-    }
-
-    // Determine if sender is buyer or seller
-    const isBuyer = table.creatorId === request.auth.agentId;
-    const isSeller = table.participantId === request.auth.agentId;
-
-    if (!isBuyer && !isSeller) {
-      return reply.status(403).send({ error: 'Not authorized' });
-    }
-
-    // Sign based on role
-    if (isBuyer) {
-      await contractService.buyerSign(contract.id);
-    } else {
-      await contractService.sellerSign(contract.id);
-    }
-
-    // Send system message
-    await messageService.create({
+    const result = await signContractUseCase({
       tableId: id,
-      senderId: request.auth.agentId,
-      content: isBuyer ? 'Buyer signed contract' : 'Seller signed contract',
-      messageType: 'system',
+      signerId: request.auth.agentId,
     });
 
-    // Check if both signed
-    const updatedContract = await contractService.findByTable(id);
-    const bothSigned = updatedContract?.buyerSigned && updatedContract?.sellerSigned;
-
-    if (bothSigned) {
-      await tableService.updateStatus(id, 'completed');
-    }
-
-    return reply.send({ 
-      contract: updatedContract,
-      bothSigned,
-    });
+    return replyWithUseCaseResult(reply, result);
   });
 
   // POST /api/tables/:id/escrow/deposit - Deposit to escrow
@@ -341,25 +278,13 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     const body = request.body as z.infer<typeof escrowDepositSchema>;
     const { amount } = body;
 
-    const table = await tableService.findById(id);
-    if (!table) {
-      return reply.status(404).send({ error: 'Table not found' });
-    }
-
-    // Only buyer can deposit
-    if (table.creatorId !== request.auth.agentId) {
-      return reply.status(403).send({
-        error: 'Only the buyer can deposit to escrow',
-      });
-    }
-
-    // In production, this would call escrowService.deposit()
-    return reply.send({
-      success: true,
+    const result = await depositEscrowUseCase({
       tableId: id,
+      depositorId: request.auth.agentId,
       amount,
-      message: 'Deposit initiated (blockchain integration pending)',
     });
+
+    return replyWithUseCaseResult(reply, result);
   });
 
   // POST /api/tables/:id/escrow/release/approve - Approve release
@@ -415,28 +340,13 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     const body = request.body as z.infer<typeof openDisputeSchema>;
     const { reason, evidence } = body;
 
-    const table = await tableService.findById(id);
-    if (!table) {
-      return reply.status(404).send({ error: 'Table not found' });
-    }
-
-    const isParticipant = table.creatorId === request.auth.agentId || 
-                          table.participantId === request.auth.agentId;
-
-    if (!isParticipant) {
-      return reply.status(403).send({ error: 'Not authorized' });
-    }
-
-    // Import dispute service
-    const { disputeService } = await import('../services/disputeService');
-    
-    const dispute = await disputeService.create({
+    const result = await openDisputeUseCase({
       tableId: id,
       openedBy: request.auth.agentId,
       reason,
       evidence,
     });
 
-    return reply.status(201).send({ dispute });
+    return replyWithUseCaseResult(reply, result, 201);
   });
 }
