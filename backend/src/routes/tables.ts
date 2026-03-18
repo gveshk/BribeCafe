@@ -12,9 +12,9 @@ import { tableService } from '../services/tableService';
 import { messageService } from '../services/messageService';
 import { quoteService } from '../services/quoteService';
 import { contractService } from '../services/contractService';
+import { escrowService } from '../services/escrowService';
 import type { CreateTableInput } from '../types';
 
-// Validation schemas
 const listTablesSchema = z.object({
   status: z.enum(['active', 'completed', 'cancelled', 'disputed']).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
@@ -22,7 +22,6 @@ const listTablesSchema = z.object({
 });
 
 export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
-  // Middleware to check table participation
   const requireParticipant = async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const isParticipant = await tableService.isParticipant(id, request.auth.agentId);
@@ -31,7 +30,6 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     }
   };
 
-  // POST /api/tables - Create a new table
   fastify.post('/', {
     preHandler: [fastify.verifyToken],
     schema: { body: createTableSchema },
@@ -41,20 +39,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     const { participantId, encryptedBudget } = body;
 
     if (creatorId === participantId) {
-      return reply.status(400).send({
-        error: 'Cannot create table with yourself',
-      });
+      return reply.status(400).send({ error: 'Cannot create table with yourself' });
     }
 
-    const input: CreateTableInput = {
-      creatorId,
-      participantId,
-      encryptedBudget,
-    };
-
+    const input: CreateTableInput = { creatorId, participantId, encryptedBudget };
     const table = await tableService.create(input);
 
-    // Send system message
     await messageService.create({
       tableId: table.id,
       senderId: creatorId,
@@ -65,7 +55,6 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.status(201).send({ table });
   });
 
-  // GET /api/tables - List tables for current agent
   fastify.get('/', {
     preHandler: [fastify.verifyToken],
     schema: { querystring: listTablesSchema },
@@ -87,7 +76,6 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     });
   });
 
-  // GET /api/tables/:id - Get table details
   fastify.get('/:id', {
     preHandler: [fastify.verifyToken, requireParticipant],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -98,7 +86,6 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'Table not found' });
     }
 
-    // Get related data
     const [messages, quotes, contracts] = await Promise.all([
       messageService.findByTable(id, { limit: 50 }),
       quoteService.findByTable(id),
@@ -113,7 +100,6 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     });
   });
 
-  // GET /api/tables/:id/messages - Get table messages
   fastify.get('/:id/messages', {
     preHandler: [fastify.verifyToken, requireParticipant],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -133,65 +119,64 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     });
   });
 
-  // POST /api/tables/:id/messages - Send message
   fastify.post('/:id/messages', {
     preHandler: [fastify.verifyToken, requireParticipant],
     schema: { body: sendMessageSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const body = request.body as z.infer<typeof sendMessageSchema>;
-    const { content, messageType } = body;
 
     const message = await messageService.create({
       tableId: id,
       senderId: request.auth.agentId,
-      content,
-      messageType,
+      content: body.content,
+      messageType: body.messageType,
     });
 
     return reply.status(201).send({ message });
   });
 
-  // POST /api/tables/:id/quote - Submit quote (seller only)
   fastify.post('/:id/quote', {
     preHandler: [fastify.verifyToken],
     schema: { body: submitQuoteSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const body = request.body as z.infer<typeof submitQuoteSchema>;
-    const { encryptedAmount, description } = body;
 
     const table = await tableService.findById(id);
     if (!table) {
       return reply.status(404).send({ error: 'Table not found' });
     }
 
-    // Only participant can submit quote
     if (table.participantId !== request.auth.agentId) {
-      return reply.status(403).send({
-        error: 'Only the invited participant can submit a quote',
-      });
+      return reply.status(403).send({ error: 'Only the invited participant can submit a quote' });
     }
 
     const quote = await quoteService.create({
       tableId: id,
       sellerId: request.auth.agentId,
-      encryptedAmount,
-      description,
+      encryptedAmount: body.encryptedAmount,
+      description: body.description,
     });
 
-    // Send system message
     await messageService.create({
       tableId: id,
       senderId: request.auth.agentId,
-      content: `Quote submitted: ${description}`,
+      content: `Quote submitted: ${body.description}`,
       messageType: 'quote',
     });
 
     return reply.status(201).send({ quote });
   });
 
-  // POST /api/tables/:id/quote/approve - Approve quote (buyer only)
+  fastify.get('/:id/quote', {
+    preHandler: [fastify.verifyToken, requireParticipant],
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const quote = await quoteService.findLatestByTable(id);
+    return reply.send({ quote });
+  });
+
   fastify.post('/:id/quote/approve', {
     preHandler: [fastify.verifyToken],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -202,11 +187,8 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'Table not found' });
     }
 
-    // Only creator (buyer) can approve
     if (table.creatorId !== request.auth.agentId) {
-      return reply.status(403).send({
-        error: 'Only the table creator can approve a quote',
-      });
+      return reply.status(403).send({ error: 'Only the table creator can approve a quote' });
     }
 
     const latestQuote = await quoteService.findLatestByTable(id);
@@ -215,11 +197,8 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const approvedQuote = await quoteService.approve(latestQuote.id, request.auth.agentId);
-
-    // Update table with quote
     await tableService.updateQuote(id, latestQuote.encryptedAmount);
 
-    // Send system message
     await messageService.create({
       tableId: id,
       senderId: request.auth.agentId,
@@ -230,21 +209,18 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({ quote: approvedQuote });
   });
 
-  // POST /api/tables/:id/contract - Create contract
   fastify.post('/:id/contract', {
     preHandler: [fastify.verifyToken],
     schema: { body: createContractSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const body = request.body as z.infer<typeof createContractSchema>;
-    const { encryptedAmount, deliverables, timeline } = body;
 
     const table = await tableService.findById(id);
     if (!table) {
       return reply.status(404).send({ error: 'Table not found' });
     }
 
-    // Verify quote is approved
     const latestQuote = await quoteService.findLatestByTable(id);
     if (!latestQuote?.approved) {
       return reply.status(400).send({ error: 'Quote must be approved first' });
@@ -254,18 +230,16 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       tableId: id,
       buyerId: table.creatorId,
       sellerId: table.participantId,
-      encryptedAmount,
-      deliverables,
+      encryptedAmount: body.encryptedAmount,
+      deliverables: body.deliverables,
       timeline: {
-        start: timeline.start,
-        end: timeline.end,
+        start: body.timeline.start,
+        end: body.timeline.end,
       },
     });
 
-    // Update table with contract hash
     await tableService.updateContractHash(id, contract.id);
 
-    // Send system message
     await messageService.create({
       tableId: id,
       senderId: table.participantId,
@@ -276,14 +250,19 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.status(201).send({ contract });
   });
 
-  // POST /api/tables/:id/contract/sign - Sign contract & deposit escrow
+  fastify.get('/:id/contract', {
+    preHandler: [fastify.verifyToken, requireParticipant],
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const contract = await contractService.findByTable(id);
+    return reply.send({ contract });
+  });
+
   fastify.post('/:id/contract/sign', {
     preHandler: [fastify.verifyToken],
     schema: { body: escrowDepositSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
-    const body = request.body as z.infer<typeof escrowDepositSchema>;
-    const { amount } = body;
 
     const table = await tableService.findById(id);
     if (!table) {
@@ -295,7 +274,6 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'Contract not found' });
     }
 
-    // Determine if sender is buyer or seller
     const isBuyer = table.creatorId === request.auth.agentId;
     const isSeller = table.participantId === request.auth.agentId;
 
@@ -303,14 +281,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(403).send({ error: 'Not authorized' });
     }
 
-    // Sign based on role
     if (isBuyer) {
       await contractService.buyerSign(contract.id);
     } else {
       await contractService.sellerSign(contract.id);
     }
 
-    // Send system message
     await messageService.create({
       tableId: id,
       senderId: request.auth.agentId,
@@ -318,7 +294,6 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       messageType: 'system',
     });
 
-    // Check if both signed
     const updatedContract = await contractService.findByTable(id);
     const bothSigned = updatedContract?.buyerSigned && updatedContract?.sellerSigned;
 
@@ -326,43 +301,36 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       await tableService.updateStatus(id, 'completed');
     }
 
-    return reply.send({ 
-      contract: updatedContract,
-      bothSigned,
-    });
+    return reply.send({ contract: updatedContract, bothSigned });
   });
 
-  // POST /api/tables/:id/escrow/deposit - Deposit to escrow
   fastify.post('/:id/escrow/deposit', {
     preHandler: [fastify.verifyToken],
     schema: { body: escrowDepositSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const body = request.body as z.infer<typeof escrowDepositSchema>;
-    const { amount } = body;
 
     const table = await tableService.findById(id);
     if (!table) {
       return reply.status(404).send({ error: 'Table not found' });
     }
 
-    // Only buyer can deposit
     if (table.creatorId !== request.auth.agentId) {
-      return reply.status(403).send({
-        error: 'Only the buyer can deposit to escrow',
-      });
+      return reply.status(403).send({ error: 'Only the buyer can deposit to escrow' });
     }
 
-    // In production, this would call escrowService.deposit()
+    const tx = await escrowService.deposit(id, body.amount);
+
     return reply.send({
       success: true,
       tableId: id,
-      amount,
-      message: 'Deposit initiated (blockchain integration pending)',
+      amount: body.amount,
+      txHash: tx.txHash,
+      settlementStatus: 'pending',
     });
   });
 
-  // POST /api/tables/:id/escrow/release/approve - Approve release
   fastify.post('/:id/escrow/release/approve', {
     preHandler: [fastify.verifyToken],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -380,63 +348,91 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(403).send({ error: 'Not authorized' });
     }
 
+    const tx = isBuyer ? await escrowService.buyerApprove(id) : await escrowService.sellerApprove(id);
+
     return reply.send({
       success: true,
       approvedBy: isBuyer ? 'buyer' : 'seller',
-      message: 'Release approval recorded',
+      txHash: tx.txHash,
+      settlementStatus: 'pending',
     });
   });
 
-  // GET /api/tables/:id/escrow/status - Get escrow status
-  fastify.get('/:id/escrow/status', {
-    preHandler: [fastify.verifyToken, requireParticipant],
-  }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string };
-
-    // In production, call escrowService.getStatus()
-    return reply.send({
-      tableId: id,
-      amount: '0',
-      fee: '0',
-      buyerApproved: false,
-      sellerApproved: false,
-      released: false,
-      cancelled: false,
-      disputed: false,
-    });
-  });
-
-  // POST /api/tables/:id/dispute - Open dispute
-  fastify.post('/:id/dispute', {
+  fastify.post('/:id/escrow/cancel', {
     preHandler: [fastify.verifyToken],
-    schema: { body: openDisputeSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
-    const body = request.body as z.infer<typeof openDisputeSchema>;
-    const { reason, evidence } = body;
 
     const table = await tableService.findById(id);
     if (!table) {
       return reply.status(404).send({ error: 'Table not found' });
     }
 
-    const isParticipant = table.creatorId === request.auth.agentId || 
-                          table.participantId === request.auth.agentId;
+    if (table.creatorId !== request.auth.agentId) {
+      return reply.status(403).send({ error: 'Only the buyer can cancel escrow' });
+    }
+
+    const tx = await escrowService.cancel(id);
+    return reply.send({ success: true, txHash: tx.txHash, settlementStatus: 'pending' });
+  });
+
+  fastify.get('/:id/escrow/status', {
+    preHandler: [fastify.verifyToken, requireParticipant],
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+
+    const status = await escrowService.getStatus(id);
+    const event = await escrowService.getLatestEvent(id);
+
+    return reply.send({
+      ...status,
+      settlementStatus: event?.settlementStatus ?? 'unknown',
+      chainId: event?.chainId ?? null,
+      txHash: event?.txHash ?? null,
+      confirmations: event?.confirmations ?? 0,
+      failureReason: event?.failureReason ?? null,
+      finalityPending: event?.settlementStatus === 'pending',
+    });
+  });
+
+  fastify.post('/:id/dispute', {
+    preHandler: [fastify.verifyToken],
+    schema: { body: openDisputeSchema },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as z.infer<typeof openDisputeSchema>;
+
+    const table = await tableService.findById(id);
+    if (!table) {
+      return reply.status(404).send({ error: 'Table not found' });
+    }
+
+    const isParticipant = table.creatorId === request.auth.agentId ||
+      table.participantId === request.auth.agentId;
 
     if (!isParticipant) {
       return reply.status(403).send({ error: 'Not authorized' });
     }
 
-    // Import dispute service
     const { disputeService } = await import('../services/disputeService');
-    
     const dispute = await disputeService.create({
       tableId: id,
       openedBy: request.auth.agentId,
-      reason,
-      evidence,
+      reason: body.reason,
+      evidence: body.evidence,
     });
 
-    return reply.status(201).send({ dispute });
+    const tx = await escrowService.openDispute(id);
+
+    return reply.status(201).send({ dispute, txHash: tx.txHash, settlementStatus: 'pending' });
+  });
+
+  fastify.get('/:id/dispute', {
+    preHandler: [fastify.verifyToken, requireParticipant],
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const { disputeService } = await import('../services/disputeService');
+    const disputes = await disputeService.findByTable(id);
+    return reply.send({ dispute: disputes[0] || null });
   });
 }
