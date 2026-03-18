@@ -4,9 +4,14 @@ import prisma from '../db/prisma';
 import type { EscrowEvent, EscrowStatus, EscrowEventType } from '../types';
 import { tableService } from './tableService';
 
+const DEFAULT_REQUIRED_CONFIRMATIONS = 3;
+const DEFAULT_SETTLEMENT_POLL_MS = 15000;
+
 export class EscrowService {
   private provider: ethers.JsonRpcProvider | null = null;
   private escrowContract: ethers.Contract | null = null;
+  private chainId: number | null = null;
+  private settlementPoller: NodeJS.Timeout | null = null;
 
   async initialize(blockchainConfig: {
     rpcUrl: string;
@@ -14,8 +19,7 @@ export class EscrowService {
     privateKey?: string;
   }): Promise<void> {
     this.provider = new ethers.JsonRpcProvider(blockchainConfig.rpcUrl);
-    
-    // Minimal ABI for Escrow functions we need
+
     const abi = [
       'function initializeForTable(bytes32 tableId, address buyer, address seller, address treasury) external',
       'function deposit(bytes32 tableId) external payable',
@@ -36,6 +40,10 @@ export class EscrowService {
       abi,
       wallet || this.provider
     );
+
+    const network = await this.provider.getNetwork();
+    this.chainId = Number(network.chainId);
+    this.startSettlementPoller();
   }
 
   async createEscrow(
@@ -54,25 +62,25 @@ export class EscrowService {
       throw new Error('Table not found');
     }
 
-    const tableIdBytes = ethers.id(tableId); // Convert to bytes32
-    const tx = await this.escrowContract.initializeForTable(
-      tableIdBytes,
-      buyerAddress,
-      sellerAddress,
-      treasuryAddress,
-      txOptions || {}
+    const tableIdBytes = ethers.id(tableId);
+    const result = await this.executeEscrowTransaction(
+      tableId,
+      'created',
+      '0',
+      '0',
+      () => this.escrowContract!.initializeForTable(
+        tableIdBytes,
+        buyerAddress,
+        sellerAddress,
+        treasuryAddress,
+        txOptions || {}
+      )
     );
 
-    const receipt = await tx.wait();
     const escrowAddress = await this.escrowContract.getAddress();
-
-    // Store escrow address in table
     await tableService.setEscrowAddress(tableId, escrowAddress);
 
-    // Log event
-    await this.logEvent(tableId, 'created', '0', '0', receipt.hash);
-
-    return { escrowAddress, txHash: receipt.hash };
+    return { escrowAddress, txHash: result.txHash };
   }
 
   async deposit(
@@ -91,20 +99,18 @@ export class EscrowService {
 
     const tableIdBytes = ethers.id(tableId);
     const value = BigInt(amount);
-    const fee = (value * BigInt(200)) / BigInt(10000); // 2%
-    const total = value + fee;
+    const fee = ((value * BigInt(200)) / BigInt(10000)).toString();
 
-    const tx = await this.escrowContract.deposit(tableIdBytes, {
-      ...txOptions,
-      value: total,
-    });
-
-    const receipt = await tx.wait();
-    const feeStr = fee.toString();
-
-    await this.logEvent(tableId, 'deposited', amount, feeStr, receipt.hash);
-
-    return { txHash: receipt.hash };
+    return this.executeEscrowTransaction(
+      tableId,
+      'deposited',
+      amount,
+      fee,
+      () => this.escrowContract!.deposit(tableIdBytes, {
+        ...txOptions,
+        value: value + BigInt(fee),
+      })
+    );
   }
 
   async buyerApprove(
@@ -116,10 +122,13 @@ export class EscrowService {
     }
 
     const tableIdBytes = ethers.id(tableId);
-    const tx = await this.escrowContract.buyerApprove(tableIdBytes, txOptions);
-    const receipt = await tx.wait();
-
-    return { txHash: receipt.hash };
+    return this.executeEscrowTransaction(
+      tableId,
+      'released',
+      '0',
+      '0',
+      () => this.escrowContract!.buyerApprove(tableIdBytes, txOptions)
+    );
   }
 
   async sellerApprove(
@@ -131,10 +140,13 @@ export class EscrowService {
     }
 
     const tableIdBytes = ethers.id(tableId);
-    const tx = await this.escrowContract.sellerApprove(tableIdBytes, txOptions);
-    const receipt = await tx.wait();
-
-    return { txHash: receipt.hash };
+    return this.executeEscrowTransaction(
+      tableId,
+      'released',
+      '0',
+      '0',
+      () => this.escrowContract!.sellerApprove(tableIdBytes, txOptions)
+    );
   }
 
   async openDispute(
@@ -146,40 +158,13 @@ export class EscrowService {
     }
 
     const tableIdBytes = ethers.id(tableId);
-    const tx = await this.escrowContract.openDispute(tableIdBytes, txOptions);
-    const receipt = await tx.wait();
-
-    await this.logEvent(tableId, 'disputed', '0', '0', receipt.hash);
-
-    return { txHash: receipt.hash };
-  }
-
-  async resolveDispute(
-    tableId: string,
-    releaseToSeller: boolean,
-    txOptions?: { gasLimit?: bigint }
-  ): Promise<{ txHash: string }> {
-    if (!this.escrowContract) {
-      throw new Error('Escrow service not initialized');
-    }
-
-    const tableIdBytes = ethers.id(tableId);
-    const tx = await this.escrowContract.resolveDispute(
-      tableIdBytes,
-      releaseToSeller,
-      txOptions
-    );
-    const receipt = await tx.wait();
-
-    await this.logEvent(
+    return this.executeEscrowTransaction(
       tableId,
-      releaseToSeller ? 'released' : 'cancelled',
+      'disputed',
       '0',
       '0',
-      receipt.hash
+      () => this.escrowContract!.openDispute(tableIdBytes, txOptions)
     );
-
-    return { txHash: receipt.hash };
   }
 
   async cancel(
@@ -191,12 +176,13 @@ export class EscrowService {
     }
 
     const tableIdBytes = ethers.id(tableId);
-    const tx = await this.escrowContract.cancel(tableIdBytes, txOptions);
-    const receipt = await tx.wait();
-
-    await this.logEvent(tableId, 'cancelled', '0', '0', receipt.hash);
-
-    return { txHash: receipt.hash };
+    return this.executeEscrowTransaction(
+      tableId,
+      'cancelled',
+      '0',
+      '0',
+      () => this.escrowContract!.cancel(tableIdBytes, txOptions)
+    );
   }
 
   async getStatus(tableId: string): Promise<EscrowStatus> {
@@ -212,6 +198,9 @@ export class EscrowService {
       tableId,
       amount: amount.toString(),
       fee: fee.toString(),
+      buyerAddress: buyer,
+      sellerAddress: seller,
+      status,
       buyerApproved,
       sellerApproved,
       released: status === 'released',
@@ -220,21 +209,146 @@ export class EscrowService {
     };
   }
 
-  private async logEvent(
+  async getLatestEvent(tableId: string): Promise<Pick<EscrowEvent, 'txHash' | 'eventType'> & {
+    chainId: number | null;
+    confirmations: number;
+    settlementStatus: string;
+    failureReason: string | null;
+  } | null> {
+    const event = await prisma.escrowEvent.findFirst({
+      where: { tableId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        txHash: true,
+        eventType: true,
+        chainId: true,
+        confirmations: true,
+        settlementStatus: true,
+        failureReason: true,
+      },
+    });
+
+    if (!event) {
+      return null;
+    }
+
+    return event;
+  }
+
+  private async executeEscrowTransaction(
     tableId: string,
     eventType: EscrowEventType,
     amount: string,
     fee: string,
-    txHash: string
-  ): Promise<void> {
-    await prisma.escrowEvent.create({
-      data: {
-        id: uuidv4(),
+    submit: () => Promise<ethers.TransactionResponse>
+  ): Promise<{ txHash: string }> {
+    try {
+      const tx = await submit();
+      await this.logEvent({
         tableId,
         eventType,
         amount,
         fee,
-        txHash,
+        txHash: tx.hash,
+        chainId: this.chainId,
+        confirmations: 0,
+        settlementStatus: 'pending',
+      });
+
+      return { txHash: tx.hash };
+    } catch (error: any) {
+      await this.logEvent({
+        tableId,
+        eventType,
+        amount,
+        fee,
+        txHash: null,
+        chainId: this.chainId,
+        confirmations: 0,
+        settlementStatus: 'failed',
+        failureReason: error?.shortMessage || error?.message || 'Unknown transaction failure',
+      });
+      throw error;
+    }
+  }
+
+  private startSettlementPoller(): void {
+    if (this.settlementPoller) {
+      clearInterval(this.settlementPoller);
+    }
+
+    this.settlementPoller = setInterval(() => {
+      this.reconcilePendingTransactions().catch(() => {
+        // noop
+      });
+    }, DEFAULT_SETTLEMENT_POLL_MS);
+  }
+
+  async reconcilePendingTransactions(): Promise<void> {
+    if (!this.provider) {
+      return;
+    }
+
+    const pendingEvents = await prisma.escrowEvent.findMany({
+      where: {
+        settlementStatus: 'pending',
+        txHash: { not: null },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    });
+
+    if (pendingEvents.length === 0) {
+      return;
+    }
+
+    const latestBlock = await this.provider.getBlockNumber();
+
+    for (const event of pendingEvents) {
+      if (!event.txHash) continue;
+
+      const receipt = await this.provider.getTransactionReceipt(event.txHash);
+      if (!receipt) continue;
+
+      const confirmations = Math.max(latestBlock - receipt.blockNumber + 1, 0);
+      const isFailed = receipt.status === 0;
+      const isFinalized = confirmations >= DEFAULT_REQUIRED_CONFIRMATIONS;
+
+      await prisma.escrowEvent.update({
+        where: { id: event.id },
+        data: {
+          confirmations,
+          settlementStatus: isFailed ? 'failed' : (isFinalized ? 'finalized' : 'pending'),
+          failureReason: isFailed ? 'Transaction reverted on-chain' : null,
+          finalizedAt: isFailed || isFinalized ? new Date() : null,
+        },
+      });
+    }
+  }
+
+  private async logEvent(input: {
+    tableId: string;
+    eventType: EscrowEventType;
+    amount: string;
+    fee: string;
+    txHash: string | null;
+    chainId: number | null;
+    confirmations: number;
+    settlementStatus: string;
+    failureReason?: string;
+  }): Promise<void> {
+    await prisma.escrowEvent.create({
+      data: {
+        id: uuidv4(),
+        tableId: input.tableId,
+        eventType: input.eventType,
+        amount: input.amount,
+        fee: input.fee,
+        txHash: input.txHash,
+        chainId: input.chainId,
+        confirmations: input.confirmations,
+        settlementStatus: input.settlementStatus,
+        failureReason: input.failureReason,
       },
     });
   }

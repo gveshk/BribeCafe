@@ -118,6 +118,11 @@ model EscrowEvent {
   amount      String
   fee         String
   txHash      String?
+  chainId     Int?
+  confirmations Int    @default(0)
+  settlementStatus String @default("pending") // pending, finalized, failed
+  failureReason String?
+  finalizedAt DateTime?
   createdAt   DateTime @default(now())
 
   // Relations
