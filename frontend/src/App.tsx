@@ -1,12 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AppProvider, useApp } from './context/AppContext';
+import { AppProvider } from './context/AppContext';
 import Dashboard from './pages/Dashboard/Dashboard';
 import TableDetail from './pages/TableDetail/TableDetail';
 import { theme } from './design-system/tokens';
 
 const AppContent: React.FC = () => {
-  const { selectedTable } = useApp();
-
   return (
     <div style={{ 
       minHeight: '100vh', 
