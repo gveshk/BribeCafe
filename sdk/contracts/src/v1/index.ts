@@ -21,7 +21,7 @@ export const AgentSchema = z.object({
   updatedAt: z.union([z.date(), z.number()]),
 });
 
-export const TableStatusSchema = z.enum(['active', 'completed', 'cancelled', 'disputed']);
+export const TableStatusSchema = z.enum(['negotiation', 'quoted', 'quote_approved', 'contract_created', 'funded', 'in_progress', 'delivery_submitted', 'accepted', 'released', 'disputed', 'cancelled']);
 export const TableSchema = z.object({
   id: z.string(),
   creatorId: z.string(),

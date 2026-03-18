@@ -6,6 +6,7 @@ import { ContractForm } from '../../components/ContractForm';
 import { EscrowStatusDisplay } from '../../components/EscrowStatus/EscrowStatus';
 import { useApp } from '../../context/AppContext';
 import api from '../../services/api';
+import { getAllowedTransitions } from '../../domain/tableLifecycle';
 
 export const TableDetail: React.FC = () => {
   const { 
@@ -121,15 +122,17 @@ export const TableDetail: React.FC = () => {
     }
   };
 
-  const canSubmitQuote = !quote && !isBuyer;
-  const canApproveQuote = quote && !quote.approvedBy.includes(currentAgent?.id || '') && isBuyer;
-  const canCreateContract = quote && quote.approvedBy.length > 0 && !contract;
-  const canSignContract = contract && (
+  const allowedTransitions = getAllowedTransitions(selectedTable.status);
+
+  const canSubmitQuote = Boolean(!quote && !isBuyer && allowedTransitions.includes('quoted'));
+  const canApproveQuote = Boolean(quote && !quote.approvedBy.includes(currentAgent?.id || '') && isBuyer && allowedTransitions.includes('quote_approved'));
+  const canCreateContract = Boolean(quote && quote.approvedBy.length > 0 && !contract && allowedTransitions.includes('contract_created'));
+  const canSignContract = Boolean(contract && (
     (isBuyer && !contract.buyerSigned) || 
     (!isBuyer && !contract.sellerSigned)
-  );
-  const canDeposit = escrow?.status === 'pending' && isBuyer;
-  const canApproveRelease = escrow?.status === 'deposited';
+  ) && allowedTransitions.includes('funded'));
+  const canDeposit = Boolean(escrow?.status === 'pending' && isBuyer && allowedTransitions.includes('in_progress'));
+  const canApproveRelease = Boolean(escrow?.status === 'deposited' && allowedTransitions.includes('released'));
 
   const containerStyle: React.CSSProperties = {
     padding: theme.spacing.xl,
@@ -157,8 +160,15 @@ export const TableDetail: React.FC = () => {
   };
 
   const statusColors: Record<string, 'success' | 'warning' | 'error' | 'info' | 'default'> = {
-    active: 'success',
-    completed: 'info',
+    negotiation: 'info',
+    quoted: 'info',
+    quote_approved: 'success',
+    contract_created: 'info',
+    funded: 'success',
+    in_progress: 'info',
+    delivery_submitted: 'info',
+    accepted: 'success',
+    released: 'success',
     cancelled: 'warning',
     disputed: 'error',
   };
@@ -197,7 +207,7 @@ export const TableDetail: React.FC = () => {
             agents={agents}
             currentAgentId={currentAgent?.id || ''}
             onSendMessage={handleSendMessage}
-            disabled={selectedTable.status === 'completed' || selectedTable.status === 'disputed'}
+            disabled={selectedTable.status === 'released' || selectedTable.status === 'disputed' || selectedTable.status === 'cancelled'}
           />
         </div>
 

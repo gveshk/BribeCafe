@@ -2,6 +2,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { ethers } from 'ethers';
 import prisma from '../db/prisma';
 import type { Table, CreateTableInput, TableStatus } from '../types';
+import {
+  assertValidTableTransition,
+  type TableLifecycleState,
+  TableTransitionValidationError,
+} from '../domain/tableLifecycle';
 
 export class TableService {
   async create(input: CreateTableInput): Promise<Table> {
@@ -75,15 +80,30 @@ export class TableService {
     };
   }
 
-  async updateStatus(id: string, status: TableStatus): Promise<Table | null> {
+  async transitionStatus(id: string, to: TableStatus): Promise<Table | null> {
+    const current = await prisma.table.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+
+    if (!current) {
+      return null;
+    }
+
+    const from = current.status as TableLifecycleState;
+    const next = to as TableLifecycleState;
+
+    assertValidTableTransition(from, next);
+
     const table = await prisma.table.update({
       where: { id },
-      data: { status },
+      data: { status: to },
       include: {
         creator: true,
         participant: true,
       },
     });
+
     return this.mapToType(table);
   }
 
@@ -155,4 +175,5 @@ export class TableService {
   }
 }
 
+export { TableTransitionValidationError };
 export const tableService = new TableService();

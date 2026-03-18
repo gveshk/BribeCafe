@@ -20,7 +20,7 @@ exports.AgentSchema = zod_1.z.object({
     createdAt: zod_1.z.union([zod_1.z.date(), zod_1.z.number()]),
     updatedAt: zod_1.z.union([zod_1.z.date(), zod_1.z.number()]),
 });
-exports.TableStatusSchema = zod_1.z.enum(['active', 'completed', 'cancelled', 'disputed']);
+exports.TableStatusSchema = zod_1.z.enum(['negotiation', 'quoted', 'quote_approved', 'contract_created', 'funded', 'in_progress', 'delivery_submitted', 'accepted', 'released', 'disputed', 'cancelled']);
 exports.TableSchema = zod_1.z.object({
     id: zod_1.z.string(),
     creatorId: zod_1.z.string(),

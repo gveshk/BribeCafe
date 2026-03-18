@@ -9,15 +9,12 @@ const REP_BUYER_PENALTY = 0; // Buyer penalty is handled via escrow
 
 export class DisputeService {
   async create(input: CreateDisputeInput): Promise<Dispute> {
-    // Verify table exists and is active
+    // Verify table exists and can transition to disputed
     const table = await tableService.findById(input.tableId);
     if (!table) {
       throw new Error('Table not found');
     }
 
-    if (table.status !== 'active') {
-      throw new Error('Can only dispute active tables');
-    }
 
     const dispute = await prisma.dispute.create({
       data: {
@@ -33,7 +30,7 @@ export class DisputeService {
     });
 
     // Update table status to disputed
-    await tableService.updateStatus(input.tableId, 'disputed');
+    await tableService.transitionStatus(input.tableId, 'disputed');
 
     return this.mapToType(dispute);
   }
@@ -98,13 +95,13 @@ export class DisputeService {
     if (decision === 'buyer_wins') {
       // Refund buyer, penalize seller
       await agentService.updateReputation(table.participantId, REP_SELLER_FAULT);
-      await tableService.updateStatus(table.id, 'cancelled');
+      await tableService.transitionStatus(table.id, 'cancelled');
     } else if (decision === 'seller_wins') {
       // Release to seller
-      await tableService.updateStatus(table.id, 'completed');
+      await tableService.transitionStatus(table.id, 'released');
     } else if (decision === 'split') {
       // Rare case - release half to each
-      await tableService.updateStatus(table.id, 'completed');
+      await tableService.transitionStatus(table.id, 'released');
     }
 
     return this.mapToType(updated);

@@ -8,7 +8,8 @@ import {
   escrowDepositSchema,
   openDisputeSchema,
 } from '../route-contracts';
-import { tableService } from '../services/tableService';
+import { tableService, TableTransitionValidationError } from '../services/tableService';
+import { TABLE_LIFECYCLE_STATES, getAllowedTableTransitions } from '../domain/tableLifecycle';
 import { messageService } from '../services/messageService';
 import { quoteService } from '../services/quoteService';
 import { contractService } from '../services/contractService';
@@ -16,7 +17,7 @@ import type { CreateTableInput } from '../types';
 
 // Validation schemas
 const listTablesSchema = z.object({
-  status: z.enum(['active', 'completed', 'cancelled', 'disputed']).optional(),
+  status: z.enum(TABLE_LIFECYCLE_STATES).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   offset: z.coerce.number().min(0).optional(),
 });
@@ -29,6 +30,20 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     if (!isParticipant) {
       return reply.status(403).send({ error: 'Not authorized' });
     }
+  };
+
+  const handleTransitionError = (reply: FastifyReply, error: unknown) => {
+    if (error instanceof TableTransitionValidationError) {
+      return reply.status(409).send({
+        error: error.message,
+        code: error.code,
+        from: error.from,
+        to: error.to,
+        allowedTransitions: getAllowedTableTransitions(error.from),
+      });
+    }
+
+    throw error;
   };
 
   // POST /api/tables - Create a new table
@@ -74,7 +89,7 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     const { status, limit, offset } = query;
 
     const result = await tableService.findByAgent(request.auth.agentId, {
-      status: status as 'active' | 'completed' | 'cancelled' | 'disputed' | undefined,
+      status: status as (typeof TABLE_LIFECYCLE_STATES)[number] | undefined,
       limit: typeof limit === 'number' ? limit : undefined,
       offset: typeof offset === 'number' ? offset : undefined,
     });
@@ -180,6 +195,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       description,
     });
 
+    try {
+      await tableService.transitionStatus(id, 'quoted');
+    } catch (error) {
+      return handleTransitionError(reply, error);
+    }
+
     // Send system message
     await messageService.create({
       tableId: id,
@@ -218,6 +239,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Update table with quote
     await tableService.updateQuote(id, latestQuote.encryptedAmount);
+
+    try {
+      await tableService.transitionStatus(id, 'quote_approved');
+    } catch (error) {
+      return handleTransitionError(reply, error);
+    }
 
     // Send system message
     await messageService.create({
@@ -264,6 +291,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Update table with contract hash
     await tableService.updateContractHash(id, contract.id);
+
+    try {
+      await tableService.transitionStatus(id, 'contract_created');
+    } catch (error) {
+      return handleTransitionError(reply, error);
+    }
 
     // Send system message
     await messageService.create({
@@ -323,7 +356,11 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     const bothSigned = updatedContract?.buyerSigned && updatedContract?.sellerSigned;
 
     if (bothSigned) {
-      await tableService.updateStatus(id, 'completed');
+      try {
+        await tableService.transitionStatus(id, 'funded');
+      } catch (error) {
+        return handleTransitionError(reply, error);
+      }
     }
 
     return reply.send({ 
@@ -351,6 +388,12 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(403).send({
         error: 'Only the buyer can deposit to escrow',
       });
+    }
+
+    try {
+      await tableService.transitionStatus(id, 'in_progress');
+    } catch (error) {
+      return handleTransitionError(reply, error);
     }
 
     // In production, this would call escrowService.deposit()
@@ -430,13 +473,17 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
     // Import dispute service
     const { disputeService } = await import('../services/disputeService');
     
-    const dispute = await disputeService.create({
-      tableId: id,
-      openedBy: request.auth.agentId,
-      reason,
-      evidence,
-    });
+    try {
+      const dispute = await disputeService.create({
+        tableId: id,
+        openedBy: request.auth.agentId,
+        reason,
+        evidence,
+      });
 
-    return reply.status(201).send({ dispute });
+      return reply.status(201).send({ dispute });
+    } catch (error) {
+      return handleTransitionError(reply, error);
+    }
   });
 }
