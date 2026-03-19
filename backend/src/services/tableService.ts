@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { ethers } from 'ethers';
 import prisma from '../db/prisma';
-import type { Table, CreateTableInput, TableStatus } from '../types';
+import type { Table, CreateTableInput } from '../types';
 
 export class TableService {
   async create(input: CreateTableInput): Promise<Table> {
@@ -48,12 +48,12 @@ export class TableService {
 
   async findByAgent(
     agentId: string,
-    options?: { status?: TableStatus; limit?: number; offset?: number }
+    options?: { status?: string; limit?: number; offset?: number }
   ): Promise<{ tables: Table[]; total: number }> {
     const where = {
       OR: [{ creatorId: agentId }, { participantId: agentId }],
       ...(options?.status && { status: options.status }),
-    };
+    } as any;
 
     const [tables, total] = await Promise.all([
       prisma.table.findMany({
@@ -75,10 +75,10 @@ export class TableService {
     };
   }
 
-  async updateStatus(id: string, status: TableStatus): Promise<Table | null> {
+  async updateStatus(id: string, status: string): Promise<Table | null> {
     const table = await prisma.table.update({
       where: { id },
-      data: { status },
+      data: { status: status as any },
       include: {
         creator: true,
         participant: true,
@@ -126,26 +126,12 @@ export class TableService {
     return table?.creatorId === agentId || table?.participantId === agentId;
   }
 
-  private mapToType(table: {
-    id: string;
-    creatorId: string;
-    participantId: string;
-    status: string;
-    encryptedBudget?: string | null;
-    encryptedQuote?: string | null;
-    contractHash?: string | null;
-    tableIdBytes?: string | null;
-    escrowAddress?: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-    creator: { id: string };
-    participant: { id: string };
-  }): Table {
+  private mapToType(table: any): Table {
     return {
       id: table.id,
       creatorId: table.creatorId,
       participantId: table.participantId,
-      status: table.status as TableStatus,
+      status: table.status as unknown as Table['status'],
       encryptedBudget: table.encryptedBudget || undefined,
       encryptedQuote: table.encryptedQuote || undefined,
       contractHash: table.contractHash || undefined,

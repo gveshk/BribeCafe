@@ -11,12 +11,19 @@ describe('approveQuoteUseCase', () => {
         findLatestQuoteByTable: async () => ({ id: 'q1', encryptedAmount: 'enc-1' }),
         executeApprovalFlow: async () => {
           called += 1;
+          return {
+            id: 'q1',
+            encryptedAmount: 'enc-1',
+            approved: true,
+            approvedBy: 'buyer-1',
+            approvedAt: new Date(),
+          };
         },
       },
     );
 
     expect(result.success).toBe(true);
-    expect(result.data).toEqual({ tableId: 't1' });
+    expect(result.data?.quote.id).toBe('q1');
     expect(called).toBe(1);
   });
 
@@ -26,7 +33,13 @@ describe('approveQuoteUseCase', () => {
       {
         findTableById: async () => ({ id: 't1', creatorId: 'buyer-1' }),
         findLatestQuoteByTable: async () => ({ id: 'q1', encryptedAmount: 'enc-1' }),
-        executeApprovalFlow: async () => undefined,
+        executeApprovalFlow: async () => ({
+          id: 'q1',
+          encryptedAmount: 'enc-1',
+          approved: true,
+          approvedBy: 'buyer-1',
+          approvedAt: new Date(),
+        }),
       },
     );
 
@@ -39,7 +52,13 @@ describe('approveQuoteUseCase', () => {
       {
         findTableById: async () => ({ id: 't1', creatorId: 'buyer-1' }),
         findLatestQuoteByTable: async () => null,
-        executeApprovalFlow: async () => undefined,
+        executeApprovalFlow: async () => ({
+          id: 'q1',
+          encryptedAmount: 'enc-1',
+          approved: true,
+          approvedBy: 'buyer-1',
+          approvedAt: new Date(),
+        }),
       },
     );
 

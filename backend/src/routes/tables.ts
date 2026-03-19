@@ -229,7 +229,11 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       approverId: request.auth.agentId,
     });
 
-    return replyWithUseCaseResult(reply, result);
+    if (!result.success) {
+      return replyWithUseCaseResult(reply, result);
+    }
+
+    return reply.send({ quote: result.data?.quote });
   });
 
   // POST /api/tables/:id/contract - Create contract
@@ -243,6 +247,7 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
 
     const result = await createContractUseCase({
       tableId: id,
+      requesterId: request.auth.agentId,
       encryptedAmount,
       deliverables,
       timeline: {
@@ -251,13 +256,16 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       },
     });
 
-    return replyWithUseCaseResult(reply, result, 201);
+    if (!result.success) {
+      return replyWithUseCaseResult(reply, result, 201);
+    }
+
+    return reply.status(201).send({ contract: result.data?.contract });
   });
 
   // POST /api/tables/:id/contract/sign - Sign contract & deposit escrow
   fastify.post('/:id/contract/sign', {
     preHandler: [fastify.verifyToken],
-    schema: { body: escrowDepositSchema },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
 
@@ -266,7 +274,14 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       signerId: request.auth.agentId,
     });
 
-    return replyWithUseCaseResult(reply, result);
+    if (!result.success) {
+      return replyWithUseCaseResult(reply, result);
+    }
+
+    return reply.send({
+      contract: result.data?.contract,
+      bothSigned: result.data?.bothSigned ?? false,
+    });
   });
 
   // POST /api/tables/:id/escrow/deposit - Deposit to escrow
@@ -347,6 +362,10 @@ export async function tableRoutes(fastify: FastifyInstance): Promise<void> {
       evidence,
     });
 
-    return replyWithUseCaseResult(reply, result, 201);
+    if (!result.success) {
+      return replyWithUseCaseResult(reply, result, 201);
+    }
+
+    return reply.status(201).send({ dispute: result.data?.dispute });
   });
 }

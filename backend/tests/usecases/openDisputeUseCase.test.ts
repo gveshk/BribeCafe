@@ -10,12 +10,22 @@ describe('openDisputeUseCase', () => {
       findTableById: async () => ({ creatorId: 'buyer', participantId: 'seller', status: 'active' }),
       executeDisputeFlow: async () => {
         called += 1;
-        return { id: 'd1' };
+        return {
+          id: 'd1',
+          tableId: 't1',
+          openedBy: 'buyer',
+          reason: 'quality',
+          evidence: ['e1'],
+          decision: null,
+          decidedBy: null,
+          decidedAt: null,
+          createdAt: new Date(),
+        };
       },
     });
 
     expect(result.success).toBe(true);
-    expect(result.data).toEqual({ disputeId: 'd1' });
+    expect(result.data?.dispute.id).toEqual('d1');
     expect(called).toBe(1);
   });
 
@@ -24,7 +34,17 @@ describe('openDisputeUseCase', () => {
       { ...payload, openedBy: 'outsider' },
       {
         findTableById: async () => ({ creatorId: 'buyer', participantId: 'seller', status: 'active' }),
-        executeDisputeFlow: async () => ({ id: 'd1' }),
+        executeDisputeFlow: async () => ({
+          id: 'd1',
+          tableId: 't1',
+          openedBy: 'buyer',
+          reason: 'quality',
+          evidence: ['e1'],
+          decision: null,
+          decidedBy: null,
+          decidedAt: null,
+          createdAt: new Date(),
+        }),
       },
     );
 
@@ -33,8 +53,18 @@ describe('openDisputeUseCase', () => {
 
   it('returns invalid state for non-active table', async () => {
     const result = await openDisputeUseCase(payload, {
-      findTableById: async () => ({ creatorId: 'buyer', participantId: 'seller', status: 'completed' }),
-      executeDisputeFlow: async () => ({ id: 'd1' }),
+      findTableById: async () => ({ creatorId: 'buyer', participantId: 'seller', status: 'disputed' }),
+      executeDisputeFlow: async () => ({
+        id: 'd1',
+        tableId: 't1',
+        openedBy: 'buyer',
+        reason: 'quality',
+        evidence: ['e1'],
+        decision: null,
+        decidedBy: null,
+        decidedAt: null,
+        createdAt: new Date(),
+      }),
     });
 
     expect(result).toMatchObject({ success: false, errorCode: 'INVALID_STATE' });

@@ -1,8 +1,20 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../db/prisma';
 import type { UseCaseResult } from './types';
 
 type TableData = { creatorId: string; participantId: string };
-type ContractData = { id: string; buyerSigned: boolean; sellerSigned: boolean };
+type ContractData = {
+  id: string;
+  tableId: string;
+  buyerId: string;
+  sellerId: string;
+  encryptedAmount: string;
+  deliverables: string[];
+  timeline: Prisma.JsonValue;
+  buyerSigned: boolean;
+  sellerSigned: boolean;
+  createdAt: Date;
+};
 
 type SignContractDeps = {
   findTableById: (tableId: string) => Promise<TableData | null>;
@@ -12,8 +24,21 @@ type SignContractDeps = {
     contractId: string;
     signerId: string;
     isBuyer: boolean;
-  }) => Promise<{ buyerSigned: boolean; sellerSigned: boolean }>;
+  }) => Promise<ContractData>;
 };
+
+const contractSelect = {
+  id: true,
+  tableId: true,
+  buyerId: true,
+  sellerId: true,
+  encryptedAmount: true,
+  deliverables: true,
+  timeline: true,
+  buyerSigned: true,
+  sellerSigned: true,
+  createdAt: true,
+} as const;
 
 const defaultDeps: SignContractDeps = {
   findTableById: (tableId) => prisma.table.findUnique({
@@ -23,16 +48,15 @@ const defaultDeps: SignContractDeps = {
   findContractByTable: (tableId) => prisma.contract.findFirst({
     where: { tableId },
     orderBy: { createdAt: 'desc' },
-    select: { id: true, buyerSigned: true, sellerSigned: true },
+    select: contractSelect,
   }),
   executeSignFlow: async ({ tableId, contractId, signerId, isBuyer }) => {
     return prisma.$transaction(async (tx) => {
-      const updated = await tx.contract.update({
+      await tx.contract.update({
         where: { id: contractId },
         data: isBuyer
           ? { buyerSigned: true, buyerSignedAt: new Date() }
           : { sellerSigned: true, sellerSignedAt: new Date() },
-        select: { buyerSigned: true, sellerSigned: true },
       });
 
       await tx.message.create({
@@ -44,8 +68,13 @@ const defaultDeps: SignContractDeps = {
         },
       });
 
+      const updated = await tx.contract.findUniqueOrThrow({
+        where: { id: contractId },
+        select: contractSelect,
+      });
+
       if (updated.buyerSigned && updated.sellerSigned) {
-        await tx.table.update({ where: { id: tableId }, data: { status: 'completed' } });
+        await tx.table.update({ where: { id: tableId }, data: { status: 'contract_created' } });
       }
 
       return updated;
@@ -56,7 +85,7 @@ const defaultDeps: SignContractDeps = {
 export async function signContractUseCase(
   input: { tableId: string; signerId: string },
   deps: SignContractDeps = defaultDeps,
-): Promise<UseCaseResult<{ bothSigned: boolean }>> {
+): Promise<UseCaseResult<{ contract: ContractData; bothSigned: boolean }>> {
   const table = await deps.findTableById(input.tableId);
   if (!table) {
     return { success: false, errorCode: 'TABLE_NOT_FOUND', message: 'Table not found' };
@@ -73,7 +102,11 @@ export async function signContractUseCase(
     return { success: false, errorCode: 'FORBIDDEN', message: 'Not authorized' };
   }
 
-  const signed = await deps.executeSignFlow({
+  if ((isBuyer && contract.buyerSigned) || (isSeller && contract.sellerSigned)) {
+    return { success: false, errorCode: 'INVALID_STATE', message: 'Contract already signed by this party' };
+  }
+
+  const updatedContract = await deps.executeSignFlow({
     tableId: input.tableId,
     contractId: contract.id,
     signerId: input.signerId,
@@ -83,6 +116,9 @@ export async function signContractUseCase(
   return {
     success: true,
     message: 'Contract signed successfully',
-    data: { bothSigned: signed.buyerSigned && signed.sellerSigned },
+    data: {
+      contract: updatedContract,
+      bothSigned: updatedContract.buyerSigned && updatedContract.sellerSigned,
+    },
   };
 }

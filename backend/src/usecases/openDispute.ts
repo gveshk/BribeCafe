@@ -2,6 +2,17 @@ import prisma from '../db/prisma';
 import type { UseCaseResult } from './types';
 
 type TableData = { creatorId: string; participantId: string; status: string };
+type DisputeData = {
+  id: string;
+  tableId: string;
+  openedBy: string;
+  reason: string;
+  evidence: string[];
+  decision: string | null;
+  decidedBy: string | null;
+  decidedAt: Date | null;
+  createdAt: Date;
+};
 
 type OpenDisputeDeps = {
   findTableById: (tableId: string) => Promise<TableData | null>;
@@ -10,8 +21,20 @@ type OpenDisputeDeps = {
     openedBy: string;
     reason: string;
     evidence: string[];
-  }) => Promise<{ id: string }>;
+  }) => Promise<DisputeData>;
 };
+
+const disputeSelect = {
+  id: true,
+  tableId: true,
+  openedBy: true,
+  reason: true,
+  evidence: true,
+  decision: true,
+  decidedBy: true,
+  decidedAt: true,
+  createdAt: true,
+} as const;
 
 const defaultDeps: OpenDisputeDeps = {
   findTableById: (tableId) => prisma.table.findUnique({
@@ -22,7 +45,7 @@ const defaultDeps: OpenDisputeDeps = {
     return prisma.$transaction(async (tx) => {
       const dispute = await tx.dispute.create({
         data: { tableId, openedBy, reason, evidence },
-        select: { id: true },
+        select: disputeSelect,
       });
 
       await tx.table.update({
@@ -38,7 +61,7 @@ const defaultDeps: OpenDisputeDeps = {
 export async function openDisputeUseCase(
   input: { tableId: string; openedBy: string; reason: string; evidence: string[] },
   deps: OpenDisputeDeps = defaultDeps,
-): Promise<UseCaseResult<{ disputeId: string }>> {
+): Promise<UseCaseResult<{ dispute: DisputeData }>> {
   const table = await deps.findTableById(input.tableId);
   if (!table) {
     return { success: false, errorCode: 'TABLE_NOT_FOUND', message: 'Table not found' };
@@ -49,11 +72,11 @@ export async function openDisputeUseCase(
     return { success: false, errorCode: 'FORBIDDEN', message: 'Not authorized' };
   }
 
-  if (table.status !== 'active') {
+  if (['disputed', 'cancelled', 'released'].includes(table.status)) {
     return {
       success: false,
       errorCode: 'INVALID_STATE',
-      message: 'Can only dispute active tables',
+      message: 'Table cannot be disputed in its current state',
     };
   }
 
@@ -62,6 +85,6 @@ export async function openDisputeUseCase(
   return {
     success: true,
     message: 'Dispute opened successfully',
-    data: { disputeId: dispute.id },
+    data: { dispute },
   };
 }

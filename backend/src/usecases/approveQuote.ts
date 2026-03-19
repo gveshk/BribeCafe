@@ -1,13 +1,24 @@
 import prisma from '../db/prisma';
 import type { UseCaseResult } from './types';
 
-type QuoteData = { id: string; encryptedAmount: string };
+type QuoteData = {
+  id: string;
+  encryptedAmount: string;
+  approved: boolean;
+  approvedBy: string | null;
+  approvedAt: Date | null;
+};
 type TableData = { id: string; creatorId: string };
 
 type ApproveQuoteDeps = {
   findTableById: (tableId: string) => Promise<TableData | null>;
-  findLatestQuoteByTable: (tableId: string) => Promise<QuoteData | null>;
-  executeApprovalFlow: (input: { tableId: string; quoteId: string; encryptedAmount: string; approverId: string }) => Promise<void>;
+  findLatestQuoteByTable: (tableId: string) => Promise<Pick<QuoteData, 'id' | 'encryptedAmount'> | null>;
+  executeApprovalFlow: (input: {
+    tableId: string;
+    quoteId: string;
+    encryptedAmount: string;
+    approverId: string;
+  }) => Promise<QuoteData>;
 };
 
 const defaultDeps: ApproveQuoteDeps = {
@@ -18,10 +29,17 @@ const defaultDeps: ApproveQuoteDeps = {
     select: { id: true, encryptedAmount: true },
   }),
   executeApprovalFlow: async ({ tableId, quoteId, encryptedAmount, approverId }) => {
-    await prisma.$transaction(async (tx) => {
+    return prisma.$transaction(async (tx) => {
       const approvedQuote = await tx.quote.update({
         where: { id: quoteId },
         data: { approved: true, approvedBy: approverId, approvedAt: new Date() },
+        select: {
+          id: true,
+          encryptedAmount: true,
+          approved: true,
+          approvedBy: true,
+          approvedAt: true,
+        },
       });
 
       await tx.table.update({
@@ -46,7 +64,7 @@ const defaultDeps: ApproveQuoteDeps = {
 export async function approveQuoteUseCase(
   input: { tableId: string; approverId: string },
   deps: ApproveQuoteDeps = defaultDeps,
-): Promise<UseCaseResult<{ tableId: string }>> {
+): Promise<UseCaseResult<{ quote: QuoteData }>> {
   const table = await deps.findTableById(input.tableId);
   if (!table) {
     return { success: false, errorCode: 'TABLE_NOT_FOUND', message: 'Table not found' };
@@ -65,7 +83,7 @@ export async function approveQuoteUseCase(
     return { success: false, errorCode: 'QUOTE_NOT_FOUND', message: 'No quote found' };
   }
 
-  await deps.executeApprovalFlow({
+  const quote = await deps.executeApprovalFlow({
     tableId: input.tableId,
     quoteId: latestQuote.id,
     encryptedAmount: latestQuote.encryptedAmount,
@@ -75,6 +93,6 @@ export async function approveQuoteUseCase(
   return {
     success: true,
     message: 'Quote approved successfully',
-    data: { tableId: input.tableId },
+    data: { quote },
   };
 }
