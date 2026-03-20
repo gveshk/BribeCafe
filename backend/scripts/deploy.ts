@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 async function main() {
-  console.log('Deploying contracts to Zama network...');
+  console.log('Deploying FHE Escrow to Zama network...');
 
   // Get deployer
   const [deployer] = await ethers.getSigners();
@@ -13,32 +13,23 @@ async function main() {
   const balance = await ethers.provider.getBalance(deployer.address);
   console.log('Account balance:', ethers.formatEther(balance), 'ETH');
 
-  // Deploy Escrow first
-  console.log('\nDeploying Escrow...');
-  const Escrow = await ethers.getContractFactory('Escrow');
-  const escrow = await Escrow.deploy();
+  // Deploy FHE Escrow
+  console.log('\nDeploying FHEEscrow...');
+  const FHEEscrow = await ethers.getContractFactory('FHEEscrow');
+  const escrow = await FHEEscrow.deploy();
   await escrow.waitForDeployment();
   const escrowAddress = await escrow.getAddress();
-  console.log('Escrow deployed to:', escrowAddress);
+  console.log('FHEEscrow deployed to:', escrowAddress);
 
   // Treasury address (use deployer for now)
   const treasury = deployer.address;
-
-  // Deploy TableFactory
-  console.log('\nDeploying TableFactory...');
-  const TableFactory = await ethers.getContractFactory('TableFactory');
-  const tableFactory = await TableFactory.deploy(treasury, escrowAddress);
-  await tableFactory.waitForDeployment();
-  const tableFactoryAddress = await tableFactory.getAddress();
-  console.log('TableFactory deployed to:', tableFactoryAddress);
 
   // Save addresses
   const config = {
     network: (await ethers.provider.getNetwork()).name,
     chainId: (await ethers.provider.getNetwork()).chainId.toString(),
     contracts: {
-      Escrow: escrowAddress,
-      TableFactory: tableFactoryAddress,
+      FHEEscrow: escrowAddress,
     },
     treasury,
     deployer: deployer.address,
@@ -50,11 +41,13 @@ async function main() {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   console.log('\nDeployment config saved to:', configPath);
 
-  // Verify on explorer (if supported)
-  console.log('\nDeployment complete!');
-  console.log('Escrow:', escrowAddress);
-  console.log('TableFactory:', tableFactoryAddress);
+  console.log('\n=== Deployment Complete ===');
+  console.log('FHEEscrow:', escrowAddress);
   console.log('Treasury:', treasury);
+  console.log('\nNext steps:');
+  console.log('1. Save these addresses to your frontend config');
+  console.log('2. Initialize FHEVM in your client (fhevmjs)');
+  console.log('3. Users can now create encrypted escrows!');
 }
 
 main()

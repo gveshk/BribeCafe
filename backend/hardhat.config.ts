@@ -3,7 +3,7 @@ require("dotenv").config();
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
-    version: "0.8.19",
+    version: "0.8.24",
     settings: {
       optimizer: {
         enabled: true,
@@ -13,7 +13,14 @@ module.exports = {
   },
   networks: {
     hardhat: {
+      chainId: 31337,
+    },
+    zamaTestnet: {
+      url: process.env.ZAMA_RPC_URL || "https://testnet.zama.ai",
       chainId: 80002,
+      accounts: process.env.ZAMA_PRIVATE_KEY 
+        ? [process.env.ZAMA_PRIVATE_KEY] 
+        : [],
     },
   },
   gasReporter: {
