@@ -9,8 +9,8 @@ describe('Button', () => {
   })
 
   it('shows loading state', () => {
-    render(<Button loading>Click me</Button>)
-    expect(screen.getByText(/loading/i)).toBeInTheDocument()
+    render(<Button isLoading>Click me</Button>)
+    expect(screen.getByLabelText(/loading/i)).toBeInTheDocument()
   })
 
   it('is disabled when disabled prop is true', () => {

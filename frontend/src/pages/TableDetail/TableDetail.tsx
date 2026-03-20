@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Button, Card, Badge, theme } from '../../design-system';
 import { Chat } from '../../components/Chat';
-import { QuoteForm } from '../../components/QuoteForm';
-import { ContractForm } from '../../components/ContractForm';
+import { QuoteForm } from '../../components/QuoteForm/QuoteForm';
+import { ContractForm } from '../../components/ContractForm/ContractForm';
 import { EscrowStatusDisplay } from '../../components/EscrowStatus/EscrowStatus';
 import { useApp } from '../../context/AppContext';
 import api from '../../services/api';

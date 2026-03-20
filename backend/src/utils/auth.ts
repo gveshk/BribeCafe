@@ -58,8 +58,9 @@ export async function registerAuth(fastify: FastifyInstance): Promise<void> {
     try {
       const decoded = await request.jwtVerify();
       const agent = await agentService.findById(decoded.agentId);
+      const tokenVersion = await agentService.getTokenVersion(decoded.agentId);
 
-      if (!agent || (agent.tokenVersion ?? 0) !== decoded.tokenVersion) {
+      if (!agent || (tokenVersion ?? 0) !== decoded.tokenVersion) {
         return reply.status(401).send({ error: 'Token revoked' });
       }
 

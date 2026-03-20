@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import App from '../App';
+import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
+import App from './App';
 
 // Basic component tests
 describe('App', () => {

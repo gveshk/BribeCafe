@@ -78,6 +78,7 @@ export const Button: React.FC<ButtonProps> = ({
   ...props
 }) => {
   const [isHovered, setIsHovered] = React.useState(false);
+  const { loading: _loading, ...buttonProps } = props as typeof props & { loading?: boolean };
 
   const baseStyle: React.CSSProperties = {
     display: 'inline-flex',
@@ -101,10 +102,10 @@ export const Button: React.FC<ButtonProps> = ({
       disabled={disabled || isLoading}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      {...props}
+      {...buttonProps}
     >
       {isLoading && (
-        <span style={{ animation: 'spin 1s linear infinite' }}>
+        <span aria-label="Loading" style={{ animation: 'spin 1s linear infinite' }}>
           ⏳
         </span>
       )}

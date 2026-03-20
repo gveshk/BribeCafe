@@ -234,4 +234,5 @@ class ApiService {
 }
 
 export const api = new ApiService();
+export const apiService = api;
 export default api;
